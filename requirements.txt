@@ -1,0 +1,6 @@
+transformers
+torch
+Pillow
+huggingface_hub
+piexif
+iptcinfo3
