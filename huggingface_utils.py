@@ -4,7 +4,7 @@
 import logging
 from functools import partial
 from tqdm import tqdm
-from huggingface_hub import list_models, hf_hub_download, snapshot_download
+from huggingface_hub import list_models, hf_hub_download, snapshot_download, hf_hub_info
 from transformers import pipeline
 from threading import RLock
 
@@ -13,6 +13,8 @@ class TqdmToQueue(tqdm):
     _lock = None
     _q = None
     _update_type = None
+    _overall_total_size = 0
+    _overall_downloaded_bytes = 0
 
     def __init__(self, *args, **kwargs):
         if 'q' in kwargs:
@@ -23,14 +25,23 @@ class TqdmToQueue(tqdm):
 
     def update(self, n=1):
         super().update(n)
+        TqdmToQueue._overall_downloaded_bytes += n
         if TqdmToQueue._q and TqdmToQueue._update_type:
-            TqdmToQueue._q.put((TqdmToQueue._update_type, (self.n, self.total)))
+            TqdmToQueue._q.put((TqdmToQueue._update_type, (TqdmToQueue._overall_downloaded_bytes, TqdmToQueue._overall_total_size)))
 
     @classmethod
     def get_lock(cls):
         if cls._lock is None:
             cls._lock = RLock()
         return cls._lock
+
+    @classmethod
+    def reset_overall_progress(cls):
+        cls._overall_downloaded_bytes = 0
+
+    @classmethod
+    def set_overall_total_size(cls, size):
+        cls._overall_total_size = size
 
 def find_models_worker(task, q):
     """Worker thread to fetch model list from Hugging Face Hub."""
@@ -63,7 +74,15 @@ def load_model_with_progress(model_id, task, q):
     try:
         q.put(("status_update", f"Downloading model {model_id}..."))
         logging.info(f"Downloading model files for {model_id}...")
+
+        # Get model info to calculate total size
+        model_info = hf_hub_info(repo_id=model_id)
+        total_model_size = sum(sibling.size for sibling in model_info.siblings if sibling.size is not None)
+        q.put(("total_model_size", total_model_size))
+        logging.info(f"Total model size for {model_id}: {total_model_size} bytes.")
         
+        TqdmToQueue.reset_overall_progress()
+        TqdmToQueue.set_overall_total_size(total_model_size)
         TqdmToQueue._q = q
         TqdmToQueue._update_type = "model_download_progress"
 
