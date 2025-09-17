@@ -1,10 +1,9 @@
-
 """Utilities for interacting with the Hugging Face Hub."""
 
 import logging
 from functools import partial
 from tqdm import tqdm
-from huggingface_hub import list_models, hf_hub_download, snapshot_download, hf_hub_info
+from huggingface_hub import list_models, hf_hub_download, snapshot_download, HfApi
 from transformers import pipeline
 from threading import RLock
 
@@ -76,7 +75,8 @@ def load_model_with_progress(model_id, task, q):
         logging.info(f"Downloading model files for {model_id}...")
 
         # Get model info to calculate total size
-        model_info = hf_hub_info(repo_id=model_id)
+        api = HfApi()
+        model_info = api.model_info(repo_id=model_id)
         total_model_size = sum(sibling.size for sibling in model_info.siblings if sibling.size is not None)
         q.put(("total_model_size", total_model_size))
         logging.info(f"Total model size for {model_id}: {total_model_size} bytes.")
