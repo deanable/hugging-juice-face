@@ -116,6 +116,7 @@ class ImageTaggerGUI(tk.Tk):
         if not selection:
             return
         model_id = self.model_listbox.get(selection[0])
+        model_id = model_id.replace(" (downloaded)", "")
         logging.info(f"User requested info for model: {model_id}")
         self.status_label.config(text=f"Status: Fetching info for {model_id}...")
         threading.Thread(target=huggingface_utils.show_model_info_worker, args=(model_id, self.q), daemon=True).start()
@@ -126,6 +127,7 @@ class ImageTaggerGUI(tk.Tk):
             messagebox.showerror("Error", "Please select a model to load.")
             return
         model_id = self.model_listbox.get(selection[0])
+        model_id = model_id.replace(" (downloaded)", "")
         logging.info(f"User initiated model load for: {model_id}")
         self.status_label.config(text=f"Status: Loading model {model_id}...")
         self.load_model_button.config(state="disabled")
@@ -191,8 +193,13 @@ class ImageTaggerGUI(tk.Tk):
 
             if message_type == "models_found":
                 self.model_listbox.delete(0, tk.END)
-                for model_id in data:
-                    self.model_listbox.insert(tk.END, model_id)
+                model_ids, downloaded_models = data
+                for model_id in model_ids:
+                    if model_id in downloaded_models:
+                        self.model_listbox.insert(tk.END, f"{model_id} (downloaded)")
+                        self.model_listbox.itemconfig(tk.END, fg='green')
+                    else:
+                        self.model_listbox.insert(tk.END, model_id)
                 self.status_label.config(text="Status: Found models. Select one to see details.")
                 self.find_models_button.config(state="normal")
 
