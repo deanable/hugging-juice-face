@@ -12,7 +12,7 @@ from threading import RLock
 
 class TqdmToQueue(tqdm):
     """A custom tqdm class that sends progress updates to a queue."""
-    _lock = None
+    _lock = RLock()
     _q = None
     _update_type = None
     _overall_total_size = 0
@@ -27,23 +27,24 @@ class TqdmToQueue(tqdm):
 
     def update(self, n=1):
         super().update(n)
-        TqdmToQueue._overall_downloaded_bytes += n
-        if TqdmToQueue._q and TqdmToQueue._update_type:
-            TqdmToQueue._q.put((TqdmToQueue._update_type, (TqdmToQueue._overall_downloaded_bytes, TqdmToQueue._overall_total_size)))
+        with TqdmToQueue._lock:
+            TqdmToQueue._overall_downloaded_bytes += n
+            if TqdmToQueue._q and TqdmToQueue._update_type:
+                TqdmToQueue._q.put((TqdmToQueue._update_type, (TqdmToQueue._overall_downloaded_bytes, TqdmToQueue._overall_total_size)))
 
     @classmethod
     def get_lock(cls):
-        if cls._lock is None:
-            cls._lock = RLock()
         return cls._lock
 
     @classmethod
     def reset_overall_progress(cls):
-        cls._overall_downloaded_bytes = 0
+        with cls._lock:
+            cls._overall_downloaded_bytes = 0
 
     @classmethod
     def set_overall_total_size(cls, size):
-        cls._overall_total_size = size
+        with cls._lock:
+            cls._overall_total_size = size
 
 def get_model_cache_dir(model_id):
     """Returns the cache directory for a given model."""
@@ -101,7 +102,6 @@ def get_downloaded_models(task):
 
 def find_models_worker(task, q):
     """Worker thread to fetch model list from Hugging Face Hub."""
-    logging.info(f"Searching for models with task: '{task}'")
     logging.info(f"Searching for models with task: '{task}'")
     try:
         models = list_models(filter=task, sort="downloads", direction=-1)

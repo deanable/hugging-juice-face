@@ -250,7 +250,25 @@ class ImageTaggerGUI(tk.Tk):
         logging.info("User initiated cache clearing.")
         if messagebox.askyesno("Confirm Clear Cache", "Are you sure you want to delete the entire model cache?\nThis action cannot be undone and will require re-downloading all models."):
             try:
-                shutil.rmtree(config.HF_CACHE_DIR)
+                cache_path = Path(config.HF_CACHE_DIR)
+                if not cache_path.exists():
+                    logging.warning("Cache directory not found during clearing.")
+                    messagebox.showinfo("Info", "The cache directory does not exist.")
+                    return
+
+                if not cache_path.is_dir():
+                    logging.error(f"Cache path is not a directory: {cache_path}")
+                    messagebox.showerror("Error", "Cache path is not a valid directory.")
+                    return
+
+                cache_path_resolved = cache_path.resolve()
+                expected_cache_name = ".cache"
+                if expected_cache_name not in str(cache_path_resolved):
+                    logging.error(f"Refusing to delete directory that doesn't appear to be a cache: {cache_path_resolved}")
+                    messagebox.showerror("Error", "Safety check failed: path does not appear to be a cache directory.")
+                    return
+
+                shutil.rmtree(cache_path)
                 logging.info("Cache cleared successfully.")
                 messagebox.showinfo("Success", "The model cache has been cleared.")
             except FileNotFoundError:
