@@ -9,6 +9,7 @@ from huggingface_hub.constants import HUGGINGFACE_HUB_CACHE
 from requests.exceptions import HTTPError
 from transformers import pipeline
 from threading import RLock
+import config
 
 class TqdmToQueue(tqdm):
     """A custom tqdm class that sends progress updates to a queue."""
@@ -67,8 +68,7 @@ def is_model_downloaded(model_id):
         latest_snapshot = snapshots[-1]
         
         for file_info in model_info.siblings:
-            # Ignore some files
-            if file_info.rfilename.endswith(('.gitattributes', 'README.md')):
+            if file_info.rfilename.endswith(config.MODEL_FILE_EXCLUSIONS):
                 continue
             file_path = os.path.join(snapshot_dir, latest_snapshot, file_info.rfilename)
             if not os.path.exists(file_path):

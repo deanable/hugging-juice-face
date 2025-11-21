@@ -12,6 +12,21 @@ GEOMETRY = "800x600"
 # The default cache directory for Hugging Face models.
 HF_CACHE_DIR = constants.HUGGINGFACE_HUB_CACHE
 
+# --- Model Tasks ---
+MODEL_TASK_IMAGE_CLASSIFICATION = "image-classification"
+MODEL_TASK_ZERO_SHOT = "zero-shot-image-classification"
+MODEL_TASK_IMAGE_TO_TEXT = "image-to-text"
+
+# --- Image Processing ---
+SUPPORTED_IMAGE_EXTENSIONS = ("*.jpg", "*.jpeg", "*.png")
+ZERO_SHOT_CONFIDENCE_THRESHOLD = 0.9
+
+# --- File Exclusions ---
+MODEL_FILE_EXCLUSIONS = (".gitattributes", "README.md")
+
+# --- Cache Validation ---
+CACHE_DIRECTORY_IDENTIFIER = ".cache"
+
 # --- Stop Words for Keyword Extraction ---
 # A list of common English words to exclude from generated keywords.
 STOP_WORDS = [

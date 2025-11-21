@@ -7,7 +7,7 @@ from PIL import Image
 import piexif
 from iptcinfo3 import IPTCInfo
 
-from config import STOP_WORDS
+import config
 
 def write_metadata(image_path, category, keywords, q):
     """Writes the category and keywords to the image's IPTC and EXIF metadata."""
@@ -54,21 +54,21 @@ def process_single_image(image_path, model, model_task, categories, keywords, q)
     category = ""
     new_keywords = []
 
-    if model_task == "image-classification":
-        result = model(image, candidate_labels=categories)
+    if model_task == config.MODEL_TASK_IMAGE_CLASSIFICATION:
+        result = model(image)
         category = max(result, key=lambda x: x['score'])['label']
         logging.info(f"Found category: '{category}' for {image_path.name}")
-    elif model_task == "zero-shot-image-classification":
+    elif model_task == config.MODEL_TASK_ZERO_SHOT:
         result = model(image, candidate_labels=keywords)
         for r in result:
-            if r['score'] > 0.9:
+            if r['score'] > config.ZERO_SHOT_CONFIDENCE_THRESHOLD:
                 new_keywords.append(r['label'])
         logging.info(f"Found keywords: {new_keywords} for {image_path.name}")
-    elif model_task == "image-to-text":
+    elif model_task == config.MODEL_TASK_IMAGE_TO_TEXT:
         result = model(image)
         generated_text = result[0]['generated_text']
         words = generated_text.lower().split()
-        new_keywords = [word for word in words if word.isalpha() and word not in STOP_WORDS]
+        new_keywords = [word for word in words if word.isalpha() and word not in config.STOP_WORDS]
         logging.info(f"Found keywords from generated text: {new_keywords} for {image_path.name}")
 
     write_metadata(image_path, category, new_keywords, q)

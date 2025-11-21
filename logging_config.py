@@ -4,16 +4,25 @@ Configuration for application-wide logging.
 
 import logging
 import datetime
+from logging.handlers import RotatingFileHandler
 
 def setup_logging():
-    """Configures the root logger to output to a file and the console."""
+    """Configures the root logger to output to a file and the console with rotation."""
     log_filename = f"image_tagger_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
-    
+
+    file_handler = RotatingFileHandler(
+        log_filename,
+        maxBytes=10 * 1024 * 1024,
+        backupCount=5
+    )
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+
     logging.basicConfig(
         level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(message)s",
-        handlers=[
-            logging.FileHandler(log_filename),
-            logging.StreamHandler()
-        ]
+        handlers=[file_handler, console_handler]
     )

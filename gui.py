@@ -56,7 +56,7 @@ class ImageTaggerGUI(tk.Tk):
 
     def _create_model_widgets(self):
         ttk.Label(self.model_frame, text="Model Task:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
-        self.model_task = ttk.Combobox(self.model_frame, values=["image-classification", "zero-shot-image-classification", "image-to-text"])
+        self.model_task = ttk.Combobox(self.model_frame, values=[config.MODEL_TASK_IMAGE_CLASSIFICATION, config.MODEL_TASK_ZERO_SHOT, config.MODEL_TASK_IMAGE_TO_TEXT])
         self.model_task.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
         self.model_task.current(0)
         self.model_task.bind("<<ComboboxSelected>>", self.on_model_task_change)
@@ -97,7 +97,7 @@ class ImageTaggerGUI(tk.Tk):
     def on_model_task_change(self, event=None):
         task = self.model_task.get()
         logging.info(f"Model task changed to: {task}")
-        if task == "image-to-text":
+        if task == config.MODEL_TASK_IMAGE_TO_TEXT:
             self.categories_entry.config(state="disabled")
             self.keywords_entry.config(state="disabled")
         else:
@@ -137,7 +137,25 @@ class ImageTaggerGUI(tk.Tk):
     def select_directory(self):
         dir_path = filedialog.askdirectory()
         if dir_path:
-            self.image_dir = Path(dir_path)
+            selected_path = Path(dir_path)
+
+            if not selected_path.exists():
+                messagebox.showerror("Error", "Selected directory does not exist.")
+                return
+
+            if not selected_path.is_dir():
+                messagebox.showerror("Error", "Selected path is not a directory.")
+                return
+
+            try:
+                test_file = selected_path / ".write_test"
+                test_file.touch()
+                test_file.unlink()
+            except (PermissionError, OSError):
+                messagebox.showerror("Error", "Directory is not writable. Please select a directory with write permissions.")
+                return
+
+            self.image_dir = selected_path
             logging.info(f"User selected directory: {dir_path}")
             self.dir_label.config(text=str(self.image_dir))
             if self.model:
@@ -146,21 +164,31 @@ class ImageTaggerGUI(tk.Tk):
     def start_processing(self):
         logging.info("User started image processing.")
         task = self.model_task.get()
-        cats_str = self.categories_entry.get()
-        keywords_str = self.keywords_entry.get()
+        cats_str = self.categories_entry.get().strip()
+        keywords_str = self.keywords_entry.get().strip()
 
-        if not cats_str and task == "image-classification":
+        if not cats_str and task == config.MODEL_TASK_IMAGE_CLASSIFICATION:
             messagebox.showerror("Error", "Categories are required for image classification.")
             return
 
-        if not keywords_str and task == "zero-shot-image-classification":
+        if not keywords_str and task == config.MODEL_TASK_ZERO_SHOT:
             messagebox.showerror("Error", "Keywords are required for zero-shot classification.")
             return
 
-        categories = [c.strip() for c in cats_str.split(",")]
-        keywords = [k.strip() for k in keywords_str.split(",")]
+        categories = [c.strip() for c in cats_str.split(",") if c.strip()]
+        keywords = [k.strip() for k in keywords_str.split(",") if k.strip()]
 
-        image_files = list(self.image_dir.rglob("*.jpg")) + list(self.image_dir.rglob("*.jpeg")) + list(self.image_dir.rglob("*.png"))
+        if not categories and task == config.MODEL_TASK_IMAGE_CLASSIFICATION:
+            messagebox.showerror("Error", "At least one valid category is required.")
+            return
+
+        if not keywords and task == config.MODEL_TASK_ZERO_SHOT:
+            messagebox.showerror("Error", "At least one valid keyword is required.")
+            return
+
+        image_files = []
+        for ext in config.SUPPORTED_IMAGE_EXTENSIONS:
+            image_files.extend(self.image_dir.rglob(ext))
 
         if not image_files:
             logging.warning("Image processing started with no images found.")
@@ -262,8 +290,7 @@ class ImageTaggerGUI(tk.Tk):
                     return
 
                 cache_path_resolved = cache_path.resolve()
-                expected_cache_name = ".cache"
-                if expected_cache_name not in str(cache_path_resolved):
+                if config.CACHE_DIRECTORY_IDENTIFIER not in str(cache_path_resolved):
                     logging.error(f"Refusing to delete directory that doesn't appear to be a cache: {cache_path_resolved}")
                     messagebox.showerror("Error", "Safety check failed: path does not appear to be a cache directory.")
                     return
