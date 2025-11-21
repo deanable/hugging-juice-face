@@ -9,10 +9,13 @@ import threading
 import queue
 import shutil
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import config
 import huggingface_utils
 import image_processing
+from config_manager import ConfigManager
+from progress_tracker import ProgressTracker
 
 class ImageTaggerGUI(tk.Tk):
     def __init__(self):
@@ -24,6 +27,8 @@ class ImageTaggerGUI(tk.Tk):
         self.model = None
         self.image_dir = None
         self.stop_event = threading.Event()
+        self.config_manager = ConfigManager()
+        self.progress_tracker = ProgressTracker()
 
         self._create_widgets()
         self._create_menu()
@@ -58,7 +63,9 @@ class ImageTaggerGUI(tk.Tk):
         ttk.Label(self.model_frame, text="Model Task:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
         self.model_task = ttk.Combobox(self.model_frame, values=[config.MODEL_TASK_IMAGE_CLASSIFICATION, config.MODEL_TASK_ZERO_SHOT, config.MODEL_TASK_IMAGE_TO_TEXT])
         self.model_task.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
-        self.model_task.current(0)
+        last_task = self.config_manager.get('last_model_task', config.MODEL_TASK_IMAGE_CLASSIFICATION)
+        task_index = [config.MODEL_TASK_IMAGE_CLASSIFICATION, config.MODEL_TASK_ZERO_SHOT, config.MODEL_TASK_IMAGE_TO_TEXT].index(last_task) if last_task in [config.MODEL_TASK_IMAGE_CLASSIFICATION, config.MODEL_TASK_ZERO_SHOT, config.MODEL_TASK_IMAGE_TO_TEXT] else 0
+        self.model_task.current(task_index)
         self.model_task.bind("<<ComboboxSelected>>", self.on_model_task_change)
         self.find_models_button = ttk.Button(self.model_frame, text="Find Models", command=self.find_models)
         self.find_models_button.grid(row=0, column=2, padx=5, pady=5)
@@ -78,11 +85,11 @@ class ImageTaggerGUI(tk.Tk):
         ttk.Label(self.config_frame, text="Enter fixed categories:").grid(row=1, column=0, padx=5, pady=5, sticky="w")
         self.categories_entry = ttk.Entry(self.config_frame, width=80)
         self.categories_entry.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
-        self.categories_entry.insert(0, "Scenery, Portrait, Document, Animal")
+        self.categories_entry.insert(0, self.config_manager.get('default_categories', 'Scenery, Portrait, Document, Animal'))
         ttk.Label(self.config_frame, text="Enter custom keywords:").grid(row=2, column=0, padx=5, pady=5, sticky="w")
         self.keywords_entry = ttk.Entry(self.config_frame, width=80)
         self.keywords_entry.grid(row=2, column=1, padx=5, pady=5, sticky="ew")
-        self.keywords_entry.insert(0, "beach, sunset, dog, car, winter")
+        self.keywords_entry.insert(0, self.config_manager.get('default_keywords', 'beach, sunset, dog, car, winter'))
         self.start_button = ttk.Button(self.config_frame, text="Start Processing", state="disabled", command=self.start_processing)
         self.start_button.grid(row=3, column=0, columnspan=2, padx=5, pady=5)
 
@@ -156,6 +163,8 @@ class ImageTaggerGUI(tk.Tk):
                 return
 
             self.image_dir = selected_path
+            self.config_manager.set('last_directory', str(selected_path))
+            self.config_manager.save_config()
             logging.info(f"User selected directory: {dir_path}")
             self.dir_label.config(text=str(self.image_dir))
             if self.model:
@@ -186,14 +195,38 @@ class ImageTaggerGUI(tk.Tk):
             messagebox.showerror("Error", "At least one valid keyword is required.")
             return
 
-        image_files = []
+        all_image_files = []
         for ext in config.SUPPORTED_IMAGE_EXTENSIONS:
-            image_files.extend(self.image_dir.rglob(ext))
+            all_image_files.extend(self.image_dir.rglob(ext))
 
-        if not image_files:
+        if not all_image_files:
             logging.warning("Image processing started with no images found.")
             messagebox.showinfo("Info", "No image files found in the selected directory.")
             return
+
+        saved_job = self.progress_tracker.load_job()
+        if saved_job and saved_job.get("directory") == str(self.image_dir):
+            resume = messagebox.askyesno(
+                "Resume Job",
+                f"Found incomplete job from {saved_job.get('started_at', 'unknown')}\n"
+                f"Processed: {len(saved_job.get('processed_images', []))} / {saved_job.get('total_images', 0)}\n\n"
+                "Do you want to resume?"
+            )
+            if not resume:
+                self.progress_tracker.clear()
+                image_files = all_image_files
+            else:
+                image_files = self.progress_tracker.get_unprocessed_images(all_image_files)
+                if not image_files:
+                    messagebox.showinfo("Info", "All images have already been processed.")
+                    self.progress_tracker.complete_job()
+                    return
+        else:
+            self.progress_tracker.clear()
+            image_files = all_image_files
+
+        model_name = self.model.model.name_or_path if self.model else "unknown"
+        self.progress_tracker.start_job(self.image_dir, len(image_files), model_name, task)
 
         self.start_button.config(state="disabled")
         self.progress_bar["maximum"] = len(image_files)
@@ -204,13 +237,31 @@ class ImageTaggerGUI(tk.Tk):
     def process_images_worker(self, image_files, categories, keywords):
         logging.info("Image processing worker started.")
         model_task = self.model_task.get()
-        for i, image_path in enumerate(image_files):
-            self.q.put(("progress", i + 1))
-            try:
-                image_processing.process_single_image(image_path, self.model, model_task, categories, keywords, self.q)
-            except Exception as e:
-                logging.exception(f"Error processing {image_path.name} in worker.")
-                self.q.put(("error", f"Failed to process {image_path.name}: {e}"))
+        max_workers = self.config_manager.get('max_concurrent_workers', 4)
+
+        completed_count = 0
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_image = {
+                executor.submit(
+                    image_processing.process_single_image,
+                    image_path, self.model, model_task, categories, keywords, self.q
+                ): image_path for image_path in image_files
+            }
+
+            for future in as_completed(future_to_image):
+                image_path = future_to_image[future]
+                completed_count += 1
+                self.q.put(("progress", completed_count))
+                try:
+                    future.result()
+                    self.progress_tracker.mark_processed(image_path)
+                except Exception as e:
+                    logging.exception(f"Error processing {image_path.name} in worker.")
+                    error_msg = str(e)
+                    self.progress_tracker.mark_failed(image_path, error_msg)
+                    self.q.put(("error", f"Failed to process {image_path.name}: {e}"))
+
+        self.progress_tracker.complete_job()
         self.q.put(("progress_done", "Finished processing."))
         logging.info("Image processing worker finished.")
 
@@ -243,7 +294,11 @@ class ImageTaggerGUI(tk.Tk):
 
             elif message_type == "model_loaded":
                 self.model = data
-                self.status_label.config(text=f"Status: Model {self.model.model.name_or_path} loaded.")
+                model_name = self.model.model.name_or_path
+                self.config_manager.set('last_model_id', model_name)
+                self.config_manager.set('last_model_task', self.model_task.get())
+                self.config_manager.save_config()
+                self.status_label.config(text=f"Status: Model {model_name} loaded.")
                 self.load_model_button.config(state="normal")
                 self.model_progress_bar["value"] = 0
                 if self.image_dir:
