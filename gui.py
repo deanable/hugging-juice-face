@@ -1,5 +1,6 @@
 """
 Main GUI for the Advanced Image Tagger application.
+Redesigned with intuitive step-by-step workflow.
 """
 
 import logging
@@ -22,7 +23,7 @@ class ImageTaggerGUI(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title(config.APP_NAME)
-        self.geometry(config.GEOMETRY)
+        self.geometry("900x800")
 
         self.q = queue.Queue()
         self.model = None
@@ -35,9 +36,10 @@ class ImageTaggerGUI(tk.Tk):
 
         self._create_widgets()
         self._create_menu()
+        self._update_step_states()
 
         self.after(100, self.process_queue)
-        logging.info("GUI initialized.")
+        logging.info("GUI initialized with step-by-step workflow.")
 
     def _create_menu(self):
         menubar = tk.Menu(self)
@@ -47,75 +49,421 @@ class ImageTaggerGUI(tk.Tk):
         menubar.add_cascade(label="Cache", menu=cache_menu)
         cache_menu.add_command(label="View Cache Path", command=self.show_cache_path)
         cache_menu.add_command(label="Clear Model Cache", command=self.clear_cache)
-        logging.info("Cache menu created.")
 
     def _create_widgets(self):
-        self.mode_frame = ttk.LabelFrame(self, text="Processing Mode")
-        self.mode_frame.pack(padx=10, pady=10, fill="x")
-        self.daminion_frame = ttk.LabelFrame(self, text="Daminion DAMS Connection")
-        self.daminion_frame.pack(padx=10, pady=10, fill="x")
-        self.model_frame = ttk.LabelFrame(self, text="Model Selection")
-        self.model_frame.pack(padx=10, pady=10, fill="x")
-        self.config_frame = ttk.LabelFrame(self, text="Configuration & Execution")
-        self.config_frame.pack(padx=10, pady=10, fill="x")
-        self.progress_frame = ttk.LabelFrame(self, text="Progress & Status")
-        self.progress_frame.pack(padx=10, pady=10, fill="x")
+        # Main container with padding
+        main_container = ttk.Frame(self, padding="10")
+        main_container.pack(fill="both", expand=True)
 
-        self._create_mode_widgets()
-        self._create_daminion_widgets()
-        self._create_model_widgets()
-        self._create_config_widgets()
-        self._create_progress_widgets()
-        logging.info("GUI widgets created.")
+        # Title
+        title_label = ttk.Label(main_container, text="AI-Powered Image Tagger",
+                                font=("Arial", 16, "bold"))
+        title_label.pack(pady=(0, 10))
 
-    def _create_mode_widgets(self):
-        ttk.Label(self.mode_frame, text="Select Mode:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        subtitle_label = ttk.Label(main_container,
+                                   text="Follow the steps below to tag your images with AI",
+                                   font=("Arial", 10))
+        subtitle_label.pack(pady=(0, 20))
+
+        # Step 1: Choose Source
+        self._create_step1_source(main_container)
+
+        # Step 2: Select AI Model
+        self._create_step2_model(main_container)
+
+        # Step 3: Configure Tagging
+        self._create_step3_config(main_container)
+
+        # Step 4: Process Images
+        self._create_step4_process(main_container)
+
+        # Progress Section
+        self._create_progress_section(main_container)
+
+    def _create_step1_source(self, parent):
+        """Step 1: Choose your image source"""
+        frame = ttk.LabelFrame(parent, text="⓵ Choose Image Source", padding="15")
+        frame.pack(fill="x", pady=(0, 15))
+
+        # Mode selection
+        mode_frame = ttk.Frame(frame)
+        mode_frame.pack(fill="x", pady=(0, 10))
+
+        ttk.Label(mode_frame, text="Select where your images are:",
+                 font=("Arial", 10, "bold")).pack(anchor="w", pady=(0, 5))
+
         self.mode_var = tk.StringVar(value="local")
-        ttk.Radiobutton(self.mode_frame, text="Local Files", variable=self.mode_var, value="local", command=self.on_mode_change).grid(row=0, column=1, padx=5, pady=5, sticky="w")
-        ttk.Radiobutton(self.mode_frame, text="Daminion DAMS", variable=self.mode_var, value="daminion", command=self.on_mode_change).grid(row=0, column=2, padx=5, pady=5, sticky="w")
 
-    def _create_daminion_widgets(self):
-        ttk.Label(self.daminion_frame, text="Server URL:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
-        self.daminion_url_entry = ttk.Entry(self.daminion_frame, width=40)
-        self.daminion_url_entry.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
-        self.daminion_url_entry.insert(0, self.config_manager.get('daminion_url', 'https://interiors.daminion.net'))
+        radio_frame = ttk.Frame(mode_frame)
+        radio_frame.pack(fill="x")
 
-        ttk.Label(self.daminion_frame, text="Username:").grid(row=1, column=0, padx=5, pady=5, sticky="w")
-        self.daminion_username_entry = ttk.Entry(self.daminion_frame, width=40)
-        self.daminion_username_entry.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
+        self.local_radio = ttk.Radiobutton(radio_frame, text="📁 Local Files (from your computer)",
+                                          variable=self.mode_var, value="local",
+                                          command=self.on_mode_change)
+        self.local_radio.pack(anchor="w", padx=20)
+
+        self.daminion_radio = ttk.Radiobutton(radio_frame, text="☁️  Daminion DAMS (from cloud server)",
+                                             variable=self.mode_var, value="daminion",
+                                             command=self.on_mode_change)
+        self.daminion_radio.pack(anchor="w", padx=20, pady=(5, 0))
+
+        # Local files section
+        self.local_section = ttk.Frame(frame)
+        self.local_section.pack(fill="x", pady=(10, 0))
+
+        ttk.Label(self.local_section, text="Image Directory:",
+                 font=("Arial", 9)).pack(anchor="w")
+
+        dir_frame = ttk.Frame(self.local_section)
+        dir_frame.pack(fill="x", pady=(5, 0))
+
+        self.select_dir_button = ttk.Button(dir_frame, text="Browse...",
+                                           command=self.select_directory, width=15)
+        self.select_dir_button.pack(side="left")
+
+        self.dir_label = ttk.Label(dir_frame, text="No directory selected",
+                                   foreground="gray")
+        self.dir_label.pack(side="left", padx=(10, 0))
+
+        # Daminion section (hidden by default)
+        self.daminion_section = ttk.Frame(frame)
+
+        ttk.Label(self.daminion_section, text="Daminion Server Connection:",
+                 font=("Arial", 9)).pack(anchor="w")
+
+        conn_grid = ttk.Frame(self.daminion_section)
+        conn_grid.pack(fill="x", pady=(5, 0))
+
+        ttk.Label(conn_grid, text="Server URL:").grid(row=0, column=0, sticky="w", padx=(0, 10))
+        self.daminion_url_entry = ttk.Entry(conn_grid, width=40)
+        self.daminion_url_entry.grid(row=0, column=1, sticky="ew", pady=2)
+        self.daminion_url_entry.insert(0, self.config_manager.get('daminion_url',
+                                                                  'https://interiors.daminion.net'))
+
+        ttk.Label(conn_grid, text="Username:").grid(row=1, column=0, sticky="w", padx=(0, 10))
+        self.daminion_username_entry = ttk.Entry(conn_grid, width=40)
+        self.daminion_username_entry.grid(row=1, column=1, sticky="ew", pady=2)
         self.daminion_username_entry.insert(0, self.config_manager.get('daminion_username', ''))
 
-        ttk.Label(self.daminion_frame, text="Password:").grid(row=2, column=0, padx=5, pady=5, sticky="w")
-        self.daminion_password_entry = ttk.Entry(self.daminion_frame, width=40, show="*")
-        self.daminion_password_entry.grid(row=2, column=1, padx=5, pady=5, sticky="ew")
+        ttk.Label(conn_grid, text="Password:").grid(row=2, column=0, sticky="w", padx=(0, 10))
+        self.daminion_password_entry = ttk.Entry(conn_grid, width=40, show="*")
+        self.daminion_password_entry.grid(row=2, column=1, sticky="ew", pady=2)
 
-        self.daminion_connect_button = ttk.Button(self.daminion_frame, text="Connect to Daminion", command=self.connect_daminion)
-        self.daminion_connect_button.grid(row=3, column=0, columnspan=2, padx=5, pady=5)
+        conn_grid.columnconfigure(1, weight=1)
 
-        self.daminion_status_label = ttk.Label(self.daminion_frame, text="Not connected", foreground="gray")
-        self.daminion_status_label.grid(row=4, column=0, columnspan=2, padx=5, pady=5)
+        btn_frame = ttk.Frame(self.daminion_section)
+        btn_frame.pack(fill="x", pady=(10, 0))
 
-        self.daminion_frame.grid_columnconfigure(1, weight=1)
-        self.daminion_frame.pack_forget()
+        self.daminion_connect_button = ttk.Button(btn_frame, text="Connect to Daminion",
+                                                 command=self.connect_daminion)
+        self.daminion_connect_button.pack(side="left")
+
+        self.daminion_status_label = ttk.Label(btn_frame, text="● Not connected",
+                                              foreground="gray")
+        self.daminion_status_label.pack(side="left", padx=(15, 0))
+
+        # Status indicator for Step 1
+        self.step1_status = ttk.Label(frame, text="", foreground="gray")
+        self.step1_status.pack(anchor="w", pady=(10, 0))
+
+    def _create_step2_model(self, parent):
+        """Step 2: Select and load AI model"""
+        frame = ttk.LabelFrame(parent, text="⓶ Select AI Model", padding="15")
+        frame.pack(fill="x", pady=(0, 15))
+
+        ttk.Label(frame, text="Choose the type of AI analysis:",
+                 font=("Arial", 10, "bold")).pack(anchor="w", pady=(0, 5))
+
+        # Model task selection
+        task_frame = ttk.Frame(frame)
+        task_frame.pack(fill="x", pady=(0, 10))
+
+        ttk.Label(task_frame, text="Analysis Type:").grid(row=0, column=0, sticky="w", padx=(0, 10))
+        self.model_task = ttk.Combobox(task_frame, values=[
+            config.MODEL_TASK_IMAGE_CLASSIFICATION,
+            config.MODEL_TASK_ZERO_SHOT,
+            config.MODEL_TASK_IMAGE_TO_TEXT
+        ], state="readonly", width=40)
+        self.model_task.grid(row=0, column=1, sticky="ew")
+
+        last_task = self.config_manager.get('last_model_task', config.MODEL_TASK_IMAGE_CLASSIFICATION)
+        task_index = [config.MODEL_TASK_IMAGE_CLASSIFICATION, config.MODEL_TASK_ZERO_SHOT,
+                      config.MODEL_TASK_IMAGE_TO_TEXT].index(last_task) if last_task in [
+            config.MODEL_TASK_IMAGE_CLASSIFICATION, config.MODEL_TASK_ZERO_SHOT,
+            config.MODEL_TASK_IMAGE_TO_TEXT] else 0
+        self.model_task.current(task_index)
+        self.model_task.bind("<<ComboboxSelected>>", self.on_model_task_change)
+
+        task_frame.columnconfigure(1, weight=1)
+
+        # Task description
+        self.task_description = ttk.Label(frame, text="", foreground="gray", wraplength=800)
+        self.task_description.pack(anchor="w", pady=(5, 15))
+        self.update_task_description()
+
+        # Find models button
+        search_frame = ttk.Frame(frame)
+        search_frame.pack(fill="x", pady=(0, 10))
+
+        self.find_models_button = ttk.Button(search_frame,
+                                            text="🔍 Search for Models on Hugging Face",
+                                            command=self.find_models, width=35)
+        self.find_models_button.pack(side="left")
+
+        # Model list
+        ttk.Label(frame, text="Available Models:", font=("Arial", 9)).pack(anchor="w", pady=(0, 5))
+
+        list_frame = ttk.Frame(frame)
+        list_frame.pack(fill="both", expand=True, pady=(0, 10))
+
+        scrollbar = ttk.Scrollbar(list_frame)
+        scrollbar.pack(side="right", fill="y")
+
+        self.model_listbox = tk.Listbox(list_frame, height=6, yscrollcommand=scrollbar.set)
+        self.model_listbox.pack(side="left", fill="both", expand=True)
+        scrollbar.config(command=self.model_listbox.yview)
+        self.model_listbox.bind("<<ListboxSelect>>", self.show_model_info)
+
+        # Model info
+        ttk.Label(frame, text="Model Information:", font=("Arial", 9)).pack(anchor="w", pady=(0, 5))
+
+        info_frame = ttk.Frame(frame)
+        info_frame.pack(fill="both", expand=True, pady=(0, 10))
+
+        info_scrollbar = ttk.Scrollbar(info_frame)
+        info_scrollbar.pack(side="right", fill="y")
+
+        self.model_info_text = tk.Text(info_frame, height=6, wrap="word",
+                                       yscrollcommand=info_scrollbar.set)
+        self.model_info_text.pack(side="left", fill="both", expand=True)
+        info_scrollbar.config(command=self.model_info_text.yview)
+
+        # Load model button and progress
+        load_frame = ttk.Frame(frame)
+        load_frame.pack(fill="x", pady=(0, 5))
+
+        self.load_model_button = ttk.Button(load_frame, text="⬇️  Download & Load Selected Model",
+                                           command=self.load_model, width=35)
+        self.load_model_button.pack(side="left")
+
+        self.model_progress_bar = ttk.Progressbar(load_frame, orient="horizontal",
+                                                 length=200, mode="determinate")
+        self.model_progress_bar.pack(side="left", padx=(15, 0), fill="x", expand=True)
+
+        # Status indicator for Step 2
+        self.step2_status = ttk.Label(frame, text="", foreground="gray")
+        self.step2_status.pack(anchor="w")
+
+    def _create_step3_config(self, parent):
+        """Step 3: Configure tagging options"""
+        frame = ttk.LabelFrame(parent, text="⓷ Configure Tagging", padding="15")
+        frame.pack(fill="x", pady=(0, 15))
+
+        ttk.Label(frame, text="Specify the categories or keywords for tagging:",
+                 font=("Arial", 10, "bold")).pack(anchor="w", pady=(0, 10))
+
+        # Categories
+        cat_frame = ttk.Frame(frame)
+        cat_frame.pack(fill="x", pady=(0, 10))
+
+        ttk.Label(cat_frame, text="Categories:", font=("Arial", 9)).grid(row=0, column=0,
+                                                                         sticky="nw", padx=(0, 10), pady=5)
+        ttk.Label(cat_frame, text="(for Image Classification)",
+                 foreground="gray", font=("Arial", 8)).grid(row=1, column=0, sticky="nw", padx=(0, 10))
+
+        self.categories_entry = ttk.Entry(cat_frame, width=60)
+        self.categories_entry.grid(row=0, column=1, rowspan=2, sticky="ew", pady=5)
+        self.categories_entry.insert(0, self.config_manager.get('default_categories',
+                                                                'Interior, Exterior, Furniture, Decor'))
+
+        cat_frame.columnconfigure(1, weight=1)
+
+        ttk.Label(frame, text="Examples: Interior, Exterior, Furniture, Portrait, Landscape",
+                 foreground="gray", font=("Arial", 8)).pack(anchor="w", padx=(100, 0))
+
+        # Keywords
+        kw_frame = ttk.Frame(frame)
+        kw_frame.pack(fill="x", pady=(15, 10))
+
+        ttk.Label(kw_frame, text="Keywords:", font=("Arial", 9)).grid(row=0, column=0,
+                                                                      sticky="nw", padx=(0, 10), pady=5)
+        ttk.Label(kw_frame, text="(for Zero-Shot Classification)",
+                 foreground="gray", font=("Arial", 8)).grid(row=1, column=0, sticky="nw", padx=(0, 10))
+
+        self.keywords_entry = ttk.Entry(kw_frame, width=60)
+        self.keywords_entry.grid(row=0, column=1, rowspan=2, sticky="ew", pady=5)
+        self.keywords_entry.insert(0, self.config_manager.get('default_keywords',
+                                                              'bedroom, kitchen, sofa, chair, modern, vintage'))
+
+        kw_frame.columnconfigure(1, weight=1)
+
+        ttk.Label(frame, text="Examples: bedroom, kitchen, sofa, modern, vintage, sunset, portrait",
+                 foreground="gray", font=("Arial", 8)).pack(anchor="w", padx=(100, 0))
+
+        # Note about Image-to-Text
+        note_frame = ttk.Frame(frame)
+        note_frame.pack(fill="x", pady=(15, 0))
+
+        ttk.Label(note_frame, text="ℹ️", font=("Arial", 12)).pack(side="left")
+        ttk.Label(note_frame,
+                 text="For Image-to-Text, categories and keywords are not required (auto-generated)",
+                 foreground="gray", font=("Arial", 8), wraplength=750).pack(side="left", padx=(5, 0))
+
+        # Status indicator for Step 3
+        self.step3_status = ttk.Label(frame, text="", foreground="gray")
+        self.step3_status.pack(anchor="w", pady=(10, 0))
+
+    def _create_step4_process(self, parent):
+        """Step 4: Start processing"""
+        frame = ttk.LabelFrame(parent, text="⓸ Process Images", padding="15")
+        frame.pack(fill="x", pady=(0, 15))
+
+        ttk.Label(frame, text="Ready to tag your images with AI!",
+                 font=("Arial", 10, "bold")).pack(anchor="w", pady=(0, 10))
+
+        self.start_button = ttk.Button(frame, text="▶️  Start Processing Images",
+                                       command=self.start_processing,
+                                       state="disabled", width=30)
+        self.start_button.pack(anchor="w")
+
+        # Status indicator for Step 4
+        self.step4_status = ttk.Label(frame, text="", foreground="gray")
+        self.step4_status.pack(anchor="w", pady=(10, 0))
+
+    def _create_progress_section(self, parent):
+        """Progress tracking section"""
+        frame = ttk.LabelFrame(parent, text="Progress", padding="15")
+        frame.pack(fill="both", expand=True)
+
+        self.status_label = ttk.Label(frame, text="Status: Ready to begin",
+                                     font=("Arial", 9))
+        self.status_label.pack(anchor="w", pady=(0, 10))
+
+        self.progress_bar = ttk.Progressbar(frame, orient="horizontal",
+                                           length=100, mode="determinate")
+        self.progress_bar.pack(fill="x", pady=(0, 5))
+
+        self.progress_label = ttk.Label(frame, text="0 / 0 images processed",
+                                       foreground="gray", font=("Arial", 8))
+        self.progress_label.pack(anchor="w")
+
+    def _update_step_states(self):
+        """Update visual indicators for each step"""
+        # Step 1: Source selected?
+        if self.processing_mode == "local":
+            if self.image_dir:
+                self.step1_status.config(text="✓ Source ready: Local directory selected",
+                                        foreground="green")
+            else:
+                self.step1_status.config(text="⚠ Please select an image directory",
+                                        foreground="orange")
+        else:
+            if self.daminion_client:
+                self.step1_status.config(text="✓ Source ready: Connected to Daminion",
+                                        foreground="green")
+            else:
+                self.step1_status.config(text="⚠ Please connect to Daminion server",
+                                        foreground="orange")
+
+        # Step 2: Model loaded?
+        if self.model:
+            model_name = self.model.model.name_or_path
+            self.step2_status.config(text=f"✓ Model loaded: {model_name}",
+                                    foreground="green")
+        else:
+            self.step2_status.config(text="⚠ Please search for and load a model",
+                                    foreground="orange")
+
+        # Step 3: Configuration ready?
+        task = self.model_task.get()
+        cats = self.categories_entry.get().strip()
+        kws = self.keywords_entry.get().strip()
+
+        if task == config.MODEL_TASK_IMAGE_TO_TEXT:
+            self.step3_status.config(text="✓ Configuration ready: Image-to-Text mode (auto)",
+                                    foreground="green")
+        elif task == config.MODEL_TASK_IMAGE_CLASSIFICATION and cats:
+            self.step3_status.config(text="✓ Configuration ready: Categories entered",
+                                    foreground="green")
+        elif task == config.MODEL_TASK_ZERO_SHOT and kws:
+            self.step3_status.config(text="✓ Configuration ready: Keywords entered",
+                                    foreground="green")
+        else:
+            self.step3_status.config(text="⚠ Please enter categories or keywords",
+                                    foreground="orange")
+
+        # Step 4: Ready to process?
+        source_ready = (self.processing_mode == "local" and self.image_dir) or \
+                      (self.processing_mode == "daminion" and self.daminion_client)
+        config_ready = (task == config.MODEL_TASK_IMAGE_TO_TEXT) or \
+                      (task == config.MODEL_TASK_IMAGE_CLASSIFICATION and cats) or \
+                      (task == config.MODEL_TASK_ZERO_SHOT and kws)
+
+        if source_ready and self.model and config_ready:
+            self.start_button.config(state="normal")
+            self.step4_status.config(text="✓ Ready to process!", foreground="green")
+        else:
+            self.start_button.config(state="disabled")
+            missing = []
+            if not source_ready:
+                missing.append("image source")
+            if not self.model:
+                missing.append("AI model")
+            if not config_ready:
+                missing.append("configuration")
+            self.step4_status.config(text=f"⚠ Complete previous steps: {', '.join(missing)}",
+                                    foreground="orange")
+
+    def update_task_description(self):
+        """Update the description based on selected task"""
+        task = self.model_task.get()
+        descriptions = {
+            config.MODEL_TASK_IMAGE_CLASSIFICATION:
+                "📋 Assigns ONE category to each image from your predefined list (e.g., Interior, Exterior, Furniture)",
+            config.MODEL_TASK_ZERO_SHOT:
+                "🏷️  Detects MULTIPLE keywords from your list with confidence >90% (e.g., bedroom, modern, sofa)",
+            config.MODEL_TASK_IMAGE_TO_TEXT:
+                "✍️  Automatically generates descriptions and extracts keywords (no configuration needed)"
+        }
+        self.task_description.config(text=descriptions.get(task, ""))
+
+    def on_model_task_change(self, event=None):
+        """Handle model task selection change"""
+        self.update_task_description()
+        self._update_step_states()
+        logging.info(f"Model task changed to: {self.model_task.get()}")
 
     def on_mode_change(self):
+        """Handle mode change between local and Daminion"""
         mode = self.mode_var.get()
         self.processing_mode = mode
         logging.info(f"Processing mode changed to: {mode}")
 
         if mode == "daminion":
-            self.daminion_frame.pack(after=self.mode_frame, padx=10, pady=10, fill="x")
-            self.select_dir_button.config(state="disabled")
+            self.daminion_section.pack(fill="x", pady=(10, 0))
+            self.local_section.pack_forget()
             self.dir_label.config(text="Daminion mode: Items will be fetched from DAMS")
         else:
-            self.daminion_frame.pack_forget()
-            self.select_dir_button.config(state="normal")
+            self.local_section.pack(fill="x", pady=(10, 0))
+            self.daminion_section.pack_forget()
             if self.image_dir:
                 self.dir_label.config(text=str(self.image_dir))
             else:
-                self.dir_label.config(text="No directory selected.")
+                self.dir_label.config(text="No directory selected")
+
+        self._update_step_states()
+
+    def select_directory(self):
+        """Select local image directory"""
+        directory = filedialog.askdirectory(title="Select Image Directory")
+        if directory:
+            self.image_dir = Path(directory)
+            self.dir_label.config(text=str(self.image_dir), foreground="black")
+            logging.info(f"Selected directory: {self.image_dir}")
+            self._update_step_states()
 
     def connect_daminion(self):
+        """Connect to Daminion server"""
         url = self.daminion_url_entry.get().strip()
         username = self.daminion_username_entry.get().strip()
         password = self.daminion_password_entry.get()
@@ -124,12 +472,14 @@ class ImageTaggerGUI(tk.Tk):
             messagebox.showerror("Error", "Please fill in all Daminion connection fields.")
             return
 
-        self.daminion_status_label.config(text="Connecting...", foreground="orange")
+        self.daminion_status_label.config(text="● Connecting...", foreground="orange")
         self.daminion_connect_button.config(state="disabled")
 
-        threading.Thread(target=self.connect_daminion_worker, args=(url, username, password), daemon=True).start()
+        threading.Thread(target=self.connect_daminion_worker,
+                        args=(url, username, password), daemon=True).start()
 
     def connect_daminion_worker(self, url, username, password):
+        """Worker thread for Daminion connection"""
         try:
             client = DaminionClient(url, username, password)
             status = client.test_connection()
@@ -147,118 +497,74 @@ class ImageTaggerGUI(tk.Tk):
             logging.exception("Daminion connection failed")
             self.q.put(("daminion_error", str(e)))
 
-    def _create_model_widgets(self):
-        ttk.Label(self.model_frame, text="Model Task:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
-        self.model_task = ttk.Combobox(self.model_frame, values=[config.MODEL_TASK_IMAGE_CLASSIFICATION, config.MODEL_TASK_ZERO_SHOT, config.MODEL_TASK_IMAGE_TO_TEXT])
-        self.model_task.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
-        last_task = self.config_manager.get('last_model_task', config.MODEL_TASK_IMAGE_CLASSIFICATION)
-        task_index = [config.MODEL_TASK_IMAGE_CLASSIFICATION, config.MODEL_TASK_ZERO_SHOT, config.MODEL_TASK_IMAGE_TO_TEXT].index(last_task) if last_task in [config.MODEL_TASK_IMAGE_CLASSIFICATION, config.MODEL_TASK_ZERO_SHOT, config.MODEL_TASK_IMAGE_TO_TEXT] else 0
-        self.model_task.current(task_index)
-        self.model_task.bind("<<ComboboxSelected>>", self.on_model_task_change)
-        self.find_models_button = ttk.Button(self.model_frame, text="Find Models", command=self.find_models)
-        self.find_models_button.grid(row=0, column=2, padx=5, pady=5)
-        self.model_listbox = tk.Listbox(self.model_frame, height=10)
-        self.model_listbox.grid(row=1, column=0, columnspan=3, padx=5, pady=5, sticky="ew")
-        self.model_listbox.bind("<<ListboxSelect>>", self.show_model_info)
-        self.model_info_text = tk.Text(self.model_frame, height=10, wrap="word")
-        self.model_info_text.grid(row=2, column=0, columnspan=3, padx=5, pady=5, sticky="ew")
-        self.load_model_button = ttk.Button(self.model_frame, text="Load Selected Model", command=self.load_model)
-        self.load_model_button.grid(row=3, column=0, columnspan=3, padx=5, pady=5)
-
-    def _create_config_widgets(self):
-        self.select_dir_button = ttk.Button(self.config_frame, text="Select Image Directory", command=self.select_directory)
-        self.select_dir_button.grid(row=0, column=0, padx=5, pady=5, sticky="w")
-        self.dir_label = ttk.Label(self.config_frame, text="No directory selected.")
-        self.dir_label.grid(row=0, column=1, padx=5, pady=5, sticky="w")
-        ttk.Label(self.config_frame, text="Enter fixed categories:").grid(row=1, column=0, padx=5, pady=5, sticky="w")
-        self.categories_entry = ttk.Entry(self.config_frame, width=80)
-        self.categories_entry.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
-        self.categories_entry.insert(0, self.config_manager.get('default_categories', 'Scenery, Portrait, Document, Animal'))
-        ttk.Label(self.config_frame, text="Enter custom keywords:").grid(row=2, column=0, padx=5, pady=5, sticky="w")
-        self.keywords_entry = ttk.Entry(self.config_frame, width=80)
-        self.keywords_entry.grid(row=2, column=1, padx=5, pady=5, sticky="ew")
-        self.keywords_entry.insert(0, self.config_manager.get('default_keywords', 'beach, sunset, dog, car, winter'))
-        self.start_button = ttk.Button(self.config_frame, text="Start Processing", state="disabled", command=self.start_processing)
-        self.start_button.grid(row=3, column=0, columnspan=2, padx=5, pady=5)
-
-    def _create_progress_widgets(self):
-        self.status_label = ttk.Label(self.progress_frame, text="Status: Ready")
-        self.status_label.pack(padx=5, pady=5, fill="x")
-        self.progress_bar = ttk.Progressbar(self.progress_frame, orient="horizontal", length=100, mode="determinate")
-        self.progress_bar.pack(padx=5, pady=5, fill="x")
-        self.model_progress_bar = ttk.Progressbar(self.progress_frame, orient="horizontal", length=100, mode="determinate")
-        self.model_progress_bar.pack(padx=5, pady=5, fill="x")
-
-    def on_model_task_change(self, event=None):
-        task = self.model_task.get()
-        logging.info(f"Model task changed to: {task}")
-        if task == config.MODEL_TASK_IMAGE_TO_TEXT:
-            self.categories_entry.config(state="disabled")
-            self.keywords_entry.config(state="disabled")
-        else:
-            self.categories_entry.config(state="normal")
-            self.keywords_entry.config(state="normal")
-
     def find_models(self):
-        logging.info("User initiated model search.")
-        self.status_label.config(text="Status: Finding models...")
+        """Search for models on Hugging Face"""
         self.find_models_button.config(state="disabled")
-        task = self.model_task.get()
-        threading.Thread(target=huggingface_utils.find_models_worker, args=(task, self.q), daemon=True).start()
+        self.status_label.config(text="Status: Searching for models on Hugging Face...")
+        logging.info("User initiated model search.")
+        threading.Thread(target=self.find_models_worker, daemon=True).start()
 
-    def show_model_info(self, event):
+    def find_models_worker(self):
+        """Worker thread for finding models"""
+        try:
+            task = self.model_task.get()
+            model_ids, downloaded_models = huggingface_utils.find_models_by_task(task)
+            self.q.put(("models_found", (model_ids, downloaded_models)))
+            logging.info(f"Found {len(model_ids)} models for task {task}.")
+        except Exception as e:
+            logging.exception("Failed to find models.")
+            self.q.put(("error", f"Failed to find models: {e}"))
+
+    def show_model_info(self, event=None):
+        """Show information about selected model"""
         selection = self.model_listbox.curselection()
         if not selection:
             return
-        model_id = self.model_listbox.get(selection[0])
-        model_id = model_id.replace(" (downloaded)", "")
-        logging.info(f"User requested info for model: {model_id}")
+
+        model_id_display = self.model_listbox.get(selection[0])
+        model_id = model_id_display.split(" (")[0]
+
         self.status_label.config(text=f"Status: Fetching info for {model_id}...")
-        threading.Thread(target=huggingface_utils.show_model_info_worker, args=(model_id, self.q), daemon=True).start()
+        threading.Thread(target=self.show_model_info_worker, args=(model_id,), daemon=True).start()
+
+    def show_model_info_worker(self, model_id):
+        """Worker thread for fetching model info"""
+        try:
+            info = huggingface_utils.get_model_info(model_id)
+            self.q.put(("model_info_found", info))
+        except Exception as e:
+            logging.exception(f"Failed to fetch model info for {model_id}.")
+            self.q.put(("error", f"Failed to fetch model info: {e}"))
 
     def load_model(self):
+        """Load selected model"""
         selection = self.model_listbox.curselection()
         if not selection:
-            messagebox.showerror("Error", "Please select a model to load.")
+            messagebox.showerror("Error", "Please select a model from the list.")
             return
-        model_id = self.model_listbox.get(selection[0])
-        model_id = model_id.replace(" (downloaded)", "")
-        logging.info(f"User initiated model load for: {model_id}")
-        self.status_label.config(text=f"Status: Loading model {model_id}...")
+
+        model_id_display = self.model_listbox.get(selection[0])
+        model_id = model_id_display.split(" (")[0]
+
         self.load_model_button.config(state="disabled")
-        task = self.model_task.get()
-        threading.Thread(target=huggingface_utils.load_model_with_progress, args=(model_id, task, self.q), daemon=True).start()
+        self.status_label.config(text=f"Status: Downloading and loading {model_id}...")
+        logging.info(f"User initiated loading of model {model_id}.")
 
-    def select_directory(self):
-        dir_path = filedialog.askdirectory()
-        if dir_path:
-            selected_path = Path(dir_path)
+        threading.Thread(target=self.load_model_worker, args=(model_id,), daemon=True).start()
 
-            if not selected_path.exists():
-                messagebox.showerror("Error", "Selected directory does not exist.")
-                return
-
-            if not selected_path.is_dir():
-                messagebox.showerror("Error", "Selected path is not a directory.")
-                return
-
-            try:
-                test_file = selected_path / ".write_test"
-                test_file.touch()
-                test_file.unlink()
-            except (PermissionError, OSError):
-                messagebox.showerror("Error", "Directory is not writable. Please select a directory with write permissions.")
-                return
-
-            self.image_dir = selected_path
-            self.config_manager.set('last_directory', str(selected_path))
-            self.config_manager.save_config()
-            logging.info(f"User selected directory: {dir_path}")
-            self.dir_label.config(text=str(self.image_dir))
-            if self.model:
-                self.start_button.config(state="normal")
+    def load_model_worker(self, model_id):
+        """Worker thread for loading model"""
+        try:
+            task = self.model_task.get()
+            model = huggingface_utils.load_model(model_id, task, progress_queue=self.q)
+            self.q.put(("model_loaded", model))
+            logging.info(f"Model {model_id} loaded successfully.")
+        except Exception as e:
+            logging.exception(f"Failed to load model {model_id}.")
+            self.q.put(("error", f"Failed to load model: {e}"))
 
     def start_processing(self):
+        """Start image processing"""
         logging.info("User started image processing.")
 
         if self.processing_mode == "daminion":
@@ -267,6 +573,7 @@ class ImageTaggerGUI(tk.Tk):
             self.start_local_processing()
 
     def start_local_processing(self):
+        """Start processing local files"""
         task = self.model_task.get()
         cats_str = self.categories_entry.get().strip()
         keywords_str = self.keywords_entry.get().strip()
@@ -326,10 +633,13 @@ class ImageTaggerGUI(tk.Tk):
         self.start_button.config(state="disabled")
         self.progress_bar["maximum"] = len(image_files)
         self.progress_bar["value"] = 0
+        self.progress_label.config(text=f"0 / {len(image_files)} images processed")
         logging.info(f"Starting processing for {len(image_files)} images.")
-        threading.Thread(target=self.process_images_worker, args=(image_files, categories, keywords), daemon=True).start()
+        threading.Thread(target=self.process_images_worker,
+                        args=(image_files, categories, keywords), daemon=True).start()
 
     def start_daminion_processing(self):
+        """Start processing Daminion items"""
         if not self.daminion_client:
             messagebox.showerror("Error", "Not connected to Daminion. Please connect first.")
             return
@@ -370,9 +680,11 @@ class ImageTaggerGUI(tk.Tk):
 
         self.start_button.config(state="disabled")
         logging.info("Starting Daminion processing...")
-        threading.Thread(target=self.process_daminion_worker, args=(categories, keywords), daemon=True).start()
+        threading.Thread(target=self.process_daminion_worker,
+                        args=(categories, keywords), daemon=True).start()
 
     def process_daminion_worker(self, categories, keywords):
+        """Worker thread for processing Daminion items"""
         logging.info("Daminion processing worker started.")
         model_task = self.model_task.get()
 
@@ -384,8 +696,7 @@ class ImageTaggerGUI(tk.Tk):
                 self.q.put(("error", "No items retrieved from Daminion"))
                 return
 
-            self.progress_bar["maximum"] = len(items)
-            self.progress_bar["value"] = 0
+            self.q.put(("progress_max", len(items)))
             self.q.put(("status_update", f"Processing {len(items)} items..."))
 
             completed_count = 0
@@ -422,7 +733,8 @@ class ImageTaggerGUI(tk.Tk):
                             detected_keywords = [r['label'] for r in result if r['score'] > 0.9]
                             if detected_keywords:
                                 logging.info(f"Item {item_id}: {detected_keywords}")
-                                self.daminion_client.update_item_metadata(str(item_id), keywords=detected_keywords)
+                                self.daminion_client.update_item_metadata(str(item_id),
+                                                                        keywords=detected_keywords)
 
                     elif model_task == config.MODEL_TASK_IMAGE_TO_TEXT:
                         result = self.model(image)
@@ -430,7 +742,8 @@ class ImageTaggerGUI(tk.Tk):
                             generated_text = result[0].get('generated_text', '')
                             generated_keywords = [w for w in generated_text.split() if len(w) > 3][:10]
                             logging.info(f"Item {item_id}: {generated_keywords}")
-                            self.daminion_client.update_item_metadata(str(item_id), keywords=generated_keywords)
+                            self.daminion_client.update_item_metadata(str(item_id),
+                                                                    keywords=generated_keywords)
 
                     completed_count += 1
                     self.q.put(("progress", completed_count))
@@ -446,9 +759,9 @@ class ImageTaggerGUI(tk.Tk):
         except Exception as e:
             logging.exception("Daminion processing worker failed")
             self.q.put(("error", f"Daminion processing failed: {e}"))
-            self.start_button.config(state="normal")
 
     def process_images_worker(self, image_files, categories, keywords):
+        """Worker thread for processing local images"""
         logging.info("Image processing worker started.")
         model_task = self.model_task.get()
         max_workers = self.config_manager.get('max_concurrent_workers', 4)
@@ -480,6 +793,7 @@ class ImageTaggerGUI(tk.Tk):
         logging.info("Image processing worker finished.")
 
     def process_queue(self):
+        """Process messages from worker threads"""
         try:
             message_type, data = self.q.get_nowait()
             logging.debug(f"GUI received queue message: {message_type}")
@@ -489,12 +803,13 @@ class ImageTaggerGUI(tk.Tk):
                 model_ids, downloaded_models = data
                 for model_id in model_ids:
                     if model_id in downloaded_models:
-                        self.model_listbox.insert(tk.END, f"{model_id} (downloaded)")
+                        self.model_listbox.insert(tk.END, f"{model_id} (✓ cached)")
                         self.model_listbox.itemconfig(tk.END, fg='green')
                     else:
                         self.model_listbox.insert(tk.END, model_id)
-                self.status_label.config(text="Status: Found models. Select one to see details.")
+                self.status_label.config(text=f"Status: Found {len(model_ids)} models. Select one to see details.")
                 self.find_models_button.config(state="normal")
+                self._update_step_states()
 
             elif message_type == "model_info_found":
                 self.model_info_text.delete("1.0", tk.END)
@@ -512,11 +827,10 @@ class ImageTaggerGUI(tk.Tk):
                 self.config_manager.set('last_model_id', model_name)
                 self.config_manager.set('last_model_task', self.model_task.get())
                 self.config_manager.save_config()
-                self.status_label.config(text=f"Status: Model {model_name} loaded.")
+                self.status_label.config(text=f"Status: Model {model_name} loaded successfully!")
                 self.load_model_button.config(state="normal")
                 self.model_progress_bar["value"] = 0
-                if self.image_dir or (self.processing_mode == "daminion" and self.daminion_client):
-                    self.start_button.config(state="normal")
+                self._update_step_states()
 
             elif message_type == "error":
                 self.status_label.config(text=f"Status: Error - {data}")
@@ -526,29 +840,39 @@ class ImageTaggerGUI(tk.Tk):
             elif message_type == "status_update":
                 self.status_label.config(text=f"Status: {data}")
 
+            elif message_type == "progress_max":
+                self.progress_bar["maximum"] = data
+                self.progress_bar["value"] = 0
+                self.progress_label.config(text=f"0 / {data} images processed")
+
             elif message_type == "progress":
                 self.progress_bar["value"] = data
+                max_val = self.progress_bar["maximum"]
+                self.progress_label.config(text=f"{data} / {int(max_val)} images processed")
 
             elif message_type == "progress_done":
                 self.status_label.config(text=f"Status: {data}")
                 self.start_button.config(state="normal")
                 self.progress_bar["value"] = self.progress_bar["maximum"]
+                max_val = int(self.progress_bar["maximum"])
+                self.progress_label.config(text=f"{max_val} / {max_val} images processed - Complete!")
 
             elif message_type == "daminion_connected":
                 status = data
                 self.daminion_status_label.config(
-                    text=f"Connected: {status['total_items']} items in catalog",
+                    text=f"● Connected: {status['total_items']} items in catalog",
                     foreground="green"
                 )
                 self.daminion_connect_button.config(state="normal")
-                if self.model:
-                    self.start_button.config(state="normal")
+                self._update_step_states()
                 logging.info(f"Daminion connected: {status['total_items']} items")
 
             elif message_type == "daminion_error":
-                self.daminion_status_label.config(text=f"Connection failed: {data}", foreground="red")
+                self.daminion_status_label.config(text=f"● Connection failed", foreground="red")
                 self.daminion_connect_button.config(state="normal")
-                messagebox.showerror("Daminion Connection Error", f"Failed to connect to Daminion:\n\n{data}")
+                messagebox.showerror("Daminion Connection Error",
+                                   f"Failed to connect to Daminion:\n\n{data}")
+                self._update_step_states()
 
         except queue.Empty:
             pass
@@ -556,12 +880,17 @@ class ImageTaggerGUI(tk.Tk):
             self.after(100, self.process_queue)
 
     def show_cache_path(self):
+        """Show cache path dialog"""
         logging.info("User viewed cache path.")
-        messagebox.showinfo("Hugging Face Cache Path", f"The model cache is located at:\n\n{config.HF_CACHE_DIR}")
+        messagebox.showinfo("Hugging Face Cache Path",
+                          f"The model cache is located at:\n\n{config.HF_CACHE_DIR}")
 
     def clear_cache(self):
+        """Clear model cache"""
         logging.info("User initiated cache clearing.")
-        if messagebox.askyesno("Confirm Clear Cache", "Are you sure you want to delete the entire model cache?\nThis action cannot be undone and will require re-downloading all models."):
+        if messagebox.askyesno("Confirm Clear Cache",
+                              "Are you sure you want to delete the entire model cache?\n"
+                              "This action cannot be undone and will require re-downloading all models."):
             try:
                 cache_path = Path(config.HF_CACHE_DIR)
                 if not cache_path.exists():
@@ -589,3 +918,12 @@ class ImageTaggerGUI(tk.Tk):
             except Exception as e:
                 logging.exception("Failed to clear cache.")
                 messagebox.showerror("Error", f"Failed to clear cache: {e}")
+
+def main():
+    from logging_config import setup_logging
+    setup_logging()
+    app = ImageTaggerGUI()
+    app.mainloop()
+
+if __name__ == "__main__":
+    main()
