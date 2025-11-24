@@ -16,6 +16,7 @@ import huggingface_utils
 import image_processing
 from config_manager import ConfigManager
 from progress_tracker import ProgressTracker
+from daminion_client import DaminionClient, DaminionAPIError
 
 class ImageTaggerGUI(tk.Tk):
     def __init__(self):
@@ -29,6 +30,8 @@ class ImageTaggerGUI(tk.Tk):
         self.stop_event = threading.Event()
         self.config_manager = ConfigManager()
         self.progress_tracker = ProgressTracker()
+        self.daminion_client = None
+        self.processing_mode = "local"
 
         self._create_widgets()
         self._create_menu()
@@ -47,6 +50,10 @@ class ImageTaggerGUI(tk.Tk):
         logging.info("Cache menu created.")
 
     def _create_widgets(self):
+        self.mode_frame = ttk.LabelFrame(self, text="Processing Mode")
+        self.mode_frame.pack(padx=10, pady=10, fill="x")
+        self.daminion_frame = ttk.LabelFrame(self, text="Daminion DAMS Connection")
+        self.daminion_frame.pack(padx=10, pady=10, fill="x")
         self.model_frame = ttk.LabelFrame(self, text="Model Selection")
         self.model_frame.pack(padx=10, pady=10, fill="x")
         self.config_frame = ttk.LabelFrame(self, text="Configuration & Execution")
@@ -54,10 +61,91 @@ class ImageTaggerGUI(tk.Tk):
         self.progress_frame = ttk.LabelFrame(self, text="Progress & Status")
         self.progress_frame.pack(padx=10, pady=10, fill="x")
 
+        self._create_mode_widgets()
+        self._create_daminion_widgets()
         self._create_model_widgets()
         self._create_config_widgets()
         self._create_progress_widgets()
         logging.info("GUI widgets created.")
+
+    def _create_mode_widgets(self):
+        ttk.Label(self.mode_frame, text="Select Mode:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        self.mode_var = tk.StringVar(value="local")
+        ttk.Radiobutton(self.mode_frame, text="Local Files", variable=self.mode_var, value="local", command=self.on_mode_change).grid(row=0, column=1, padx=5, pady=5, sticky="w")
+        ttk.Radiobutton(self.mode_frame, text="Daminion DAMS", variable=self.mode_var, value="daminion", command=self.on_mode_change).grid(row=0, column=2, padx=5, pady=5, sticky="w")
+
+    def _create_daminion_widgets(self):
+        ttk.Label(self.daminion_frame, text="Server URL:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        self.daminion_url_entry = ttk.Entry(self.daminion_frame, width=40)
+        self.daminion_url_entry.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
+        self.daminion_url_entry.insert(0, self.config_manager.get('daminion_url', 'https://interiors.daminion.net'))
+
+        ttk.Label(self.daminion_frame, text="Username:").grid(row=1, column=0, padx=5, pady=5, sticky="w")
+        self.daminion_username_entry = ttk.Entry(self.daminion_frame, width=40)
+        self.daminion_username_entry.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
+        self.daminion_username_entry.insert(0, self.config_manager.get('daminion_username', ''))
+
+        ttk.Label(self.daminion_frame, text="Password:").grid(row=2, column=0, padx=5, pady=5, sticky="w")
+        self.daminion_password_entry = ttk.Entry(self.daminion_frame, width=40, show="*")
+        self.daminion_password_entry.grid(row=2, column=1, padx=5, pady=5, sticky="ew")
+
+        self.daminion_connect_button = ttk.Button(self.daminion_frame, text="Connect to Daminion", command=self.connect_daminion)
+        self.daminion_connect_button.grid(row=3, column=0, columnspan=2, padx=5, pady=5)
+
+        self.daminion_status_label = ttk.Label(self.daminion_frame, text="Not connected", foreground="gray")
+        self.daminion_status_label.grid(row=4, column=0, columnspan=2, padx=5, pady=5)
+
+        self.daminion_frame.grid_columnconfigure(1, weight=1)
+        self.daminion_frame.pack_forget()
+
+    def on_mode_change(self):
+        mode = self.mode_var.get()
+        self.processing_mode = mode
+        logging.info(f"Processing mode changed to: {mode}")
+
+        if mode == "daminion":
+            self.daminion_frame.pack(after=self.mode_frame, padx=10, pady=10, fill="x")
+            self.select_dir_button.config(state="disabled")
+            self.dir_label.config(text="Daminion mode: Items will be fetched from DAMS")
+        else:
+            self.daminion_frame.pack_forget()
+            self.select_dir_button.config(state="normal")
+            if self.image_dir:
+                self.dir_label.config(text=str(self.image_dir))
+            else:
+                self.dir_label.config(text="No directory selected.")
+
+    def connect_daminion(self):
+        url = self.daminion_url_entry.get().strip()
+        username = self.daminion_username_entry.get().strip()
+        password = self.daminion_password_entry.get()
+
+        if not url or not username or not password:
+            messagebox.showerror("Error", "Please fill in all Daminion connection fields.")
+            return
+
+        self.daminion_status_label.config(text="Connecting...", foreground="orange")
+        self.daminion_connect_button.config(state="disabled")
+
+        threading.Thread(target=self.connect_daminion_worker, args=(url, username, password), daemon=True).start()
+
+    def connect_daminion_worker(self, url, username, password):
+        try:
+            client = DaminionClient(url, username, password)
+            status = client.test_connection()
+
+            if status['connected']:
+                self.daminion_client = client
+                self.config_manager.set('daminion_url', url)
+                self.config_manager.set('daminion_username', username)
+                self.config_manager.save_config()
+
+                self.q.put(("daminion_connected", status))
+            else:
+                self.q.put(("daminion_error", status.get('error', 'Unknown error')))
+        except Exception as e:
+            logging.exception("Daminion connection failed")
+            self.q.put(("daminion_error", str(e)))
 
     def _create_model_widgets(self):
         ttk.Label(self.model_frame, text="Model Task:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
@@ -172,6 +260,13 @@ class ImageTaggerGUI(tk.Tk):
 
     def start_processing(self):
         logging.info("User started image processing.")
+
+        if self.processing_mode == "daminion":
+            self.start_daminion_processing()
+        else:
+            self.start_local_processing()
+
+    def start_local_processing(self):
         task = self.model_task.get()
         cats_str = self.categories_entry.get().strip()
         keywords_str = self.keywords_entry.get().strip()
@@ -233,6 +328,24 @@ class ImageTaggerGUI(tk.Tk):
         self.progress_bar["value"] = 0
         logging.info(f"Starting processing for {len(image_files)} images.")
         threading.Thread(target=self.process_images_worker, args=(image_files, categories, keywords), daemon=True).start()
+
+    def start_daminion_processing(self):
+        if not self.daminion_client:
+            messagebox.showerror("Error", "Not connected to Daminion. Please connect first.")
+            return
+
+        messagebox.showinfo(
+            "Daminion Mode - API Limitation",
+            "Note: The current Daminion API returns 200 items but an empty items array.\n\n"
+            "This integration is ready but requires:\n"
+            "1. Item IDs to be accessible via the API\n"
+            "2. Or a different endpoint/parameter to retrieve actual items\n\n"
+            "Once item IDs are available, the system will:\n"
+            "- Download thumbnails\n"
+            "- Process with AI models\n"
+            "- Commit tags back to Daminion"
+        )
+        logging.warning("Daminion processing not yet fully implemented due to API limitations")
 
     def process_images_worker(self, image_files, categories, keywords):
         logging.info("Image processing worker started.")
@@ -301,7 +414,7 @@ class ImageTaggerGUI(tk.Tk):
                 self.status_label.config(text=f"Status: Model {model_name} loaded.")
                 self.load_model_button.config(state="normal")
                 self.model_progress_bar["value"] = 0
-                if self.image_dir:
+                if self.image_dir or (self.processing_mode == "daminion" and self.daminion_client):
                     self.start_button.config(state="normal")
 
             elif message_type == "error":
@@ -319,6 +432,22 @@ class ImageTaggerGUI(tk.Tk):
                 self.status_label.config(text=f"Status: {data}")
                 self.start_button.config(state="normal")
                 self.progress_bar["value"] = self.progress_bar["maximum"]
+
+            elif message_type == "daminion_connected":
+                status = data
+                self.daminion_status_label.config(
+                    text=f"Connected: {status['total_items']} items in catalog",
+                    foreground="green"
+                )
+                self.daminion_connect_button.config(state="normal")
+                if self.model:
+                    self.start_button.config(state="normal")
+                logging.info(f"Daminion connected: {status['total_items']} items")
+
+            elif message_type == "daminion_error":
+                self.daminion_status_label.config(text=f"Connection failed: {data}", foreground="red")
+                self.daminion_connect_button.config(state="normal")
+                messagebox.showerror("Daminion Connection Error", f"Failed to connect to Daminion:\n\n{data}")
 
         except queue.Empty:
             pass
