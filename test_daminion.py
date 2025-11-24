@@ -17,8 +17,8 @@ def main():
     # Initialize client
     client = DaminionClient(
         base_url="https://interiors.daminion.net",
-        username="Dean",
-        password="Daminion789"
+        username="",
+        password=""
     )
 
     try:
