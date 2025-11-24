@@ -20,6 +20,13 @@ MODEL_TASK_IMAGE_TO_TEXT = "image-to-text"
 # --- Image Processing ---
 SUPPORTED_IMAGE_EXTENSIONS = ("*.jpg", "*.jpeg", "*.png")
 ZERO_SHOT_CONFIDENCE_THRESHOLD = 0.9
+MAX_IMAGE_SIZE_MB = 50
+MAX_KEYWORDS_PER_IMAGE = 20
+
+# --- Network & Retry ---
+MAX_RETRIES = 3
+RETRY_DELAY_SECONDS = 1.0
+NETWORK_TIMEOUT_SECONDS = 30
 
 # --- File Exclusions ---
 MODEL_FILE_EXCLUSIONS = (".gitattributes", "README.md")

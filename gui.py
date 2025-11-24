@@ -18,6 +18,8 @@ import image_processing
 from config_manager import ConfigManager
 from progress_tracker import ProgressTracker
 from daminion_client import DaminionClient, DaminionAPIError
+from report_generator import ProcessingReport
+import time
 
 class ImageTaggerGUI(tk.Tk):
     def __init__(self):
@@ -33,6 +35,8 @@ class ImageTaggerGUI(tk.Tk):
         self.progress_tracker = ProgressTracker()
         self.daminion_client = None
         self.processing_mode = "local"
+        self.report = ProcessingReport()
+        self.processing_start_time = None
 
         self._create_widgets()
         self._create_menu()
@@ -49,6 +53,12 @@ class ImageTaggerGUI(tk.Tk):
         menubar.add_cascade(label="Cache", menu=cache_menu)
         cache_menu.add_command(label="View Cache Path", command=self.show_cache_path)
         cache_menu.add_command(label="Clear Model Cache", command=self.clear_cache)
+
+        report_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Reports", menu=report_menu)
+        report_menu.add_command(label="Export Report (CSV)", command=self.export_report_csv)
+        report_menu.add_command(label="Export Report (JSON)", command=self.export_report_json)
+        report_menu.add_command(label="View Report Summary", command=self.show_report_summary)
 
     def _create_widgets(self):
         # Main container with padding
@@ -343,9 +353,16 @@ class ImageTaggerGUI(tk.Tk):
                                            length=100, mode="determinate")
         self.progress_bar.pack(fill="x", pady=(0, 5))
 
-        self.progress_label = ttk.Label(frame, text="0 / 0 images processed",
+        progress_info_frame = ttk.Frame(frame)
+        progress_info_frame.pack(fill="x")
+
+        self.progress_label = ttk.Label(progress_info_frame, text="0 / 0 images processed",
                                        foreground="gray", font=("Arial", 8))
-        self.progress_label.pack(anchor="w")
+        self.progress_label.pack(side="left")
+
+        self.time_label = ttk.Label(progress_info_frame, text="",
+                                    foreground="gray", font=("Arial", 8))
+        self.time_label.pack(side="right")
 
     def _update_step_states(self):
         """Update visual indicators for each step"""
@@ -630,10 +647,14 @@ class ImageTaggerGUI(tk.Tk):
         model_name = self.model.model.name_or_path if self.model else "unknown"
         self.progress_tracker.start_job(self.image_dir, len(image_files), model_name, task)
 
+        self.report.start_session(model_name, task, len(image_files))
+        self.processing_start_time = time.time()
+
         self.start_button.config(state="disabled")
         self.progress_bar["maximum"] = len(image_files)
         self.progress_bar["value"] = 0
         self.progress_label.config(text=f"0 / {len(image_files)} images processed")
+        self.time_label.config(text="Calculating...")
         logging.info(f"Starting processing for {len(image_files)} images.")
         threading.Thread(target=self.process_images_worker,
                         args=(image_files, categories, keywords), daemon=True).start()
@@ -777,15 +798,50 @@ class ImageTaggerGUI(tk.Tk):
 
             for future in as_completed(future_to_image):
                 image_path = future_to_image[future]
+                start_time = time.time()
                 completed_count += 1
                 self.q.put(("progress", completed_count))
+
                 try:
-                    future.result()
-                    self.progress_tracker.mark_processed(image_path)
+                    success, error = future.result()
+                    processing_time = time.time() - start_time
+
+                    if success:
+                        self.progress_tracker.mark_processed(image_path)
+                        self.report.add_result(
+                            str(image_path),
+                            "",
+                            [],
+                            True,
+                            None,
+                            processing_time
+                        )
+                    else:
+                        error_msg = error or "Unknown error"
+                        self.progress_tracker.mark_failed(image_path, error_msg)
+                        self.report.add_result(
+                            str(image_path),
+                            "",
+                            [],
+                            False,
+                            error_msg,
+                            processing_time
+                        )
+
                 except Exception as e:
                     logging.exception(f"Error processing {image_path.name} in worker.")
                     error_msg = str(e)
+                    processing_time = time.time() - start_time
+
                     self.progress_tracker.mark_failed(image_path, error_msg)
+                    self.report.add_result(
+                        str(image_path),
+                        "",
+                        [],
+                        False,
+                        error_msg,
+                        processing_time
+                    )
                     self.q.put(("error", f"Failed to process {image_path.name}: {e}"))
 
         self.progress_tracker.complete_job()
@@ -850,12 +906,17 @@ class ImageTaggerGUI(tk.Tk):
                 max_val = self.progress_bar["maximum"]
                 self.progress_label.config(text=f"{data} / {int(max_val)} images processed")
 
+                time_remaining = self.calculate_time_remaining(data, int(max_val))
+                self.time_label.config(text=time_remaining)
+
             elif message_type == "progress_done":
+                self.report.end_session()
                 self.status_label.config(text=f"Status: {data}")
                 self.start_button.config(state="normal")
                 self.progress_bar["value"] = self.progress_bar["maximum"]
                 max_val = int(self.progress_bar["maximum"])
                 self.progress_label.config(text=f"{max_val} / {max_val} images processed - Complete!")
+                self.time_label.config(text="Done!")
 
             elif message_type == "daminion_connected":
                 status = data
@@ -918,6 +979,96 @@ class ImageTaggerGUI(tk.Tk):
             except Exception as e:
                 logging.exception("Failed to clear cache.")
                 messagebox.showerror("Error", f"Failed to clear cache: {e}")
+
+    def export_report_csv(self):
+        """Export processing report to CSV"""
+        if not self.report.results:
+            messagebox.showinfo("No Data", "No processing results to export.")
+            return
+
+        file_path = filedialog.asksaveasfilename(
+            title="Save CSV Report",
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
+        )
+
+        if file_path:
+            success = self.report.export_csv(Path(file_path))
+            if success:
+                messagebox.showinfo("Success", f"Report exported to:\n{file_path}")
+            else:
+                messagebox.showerror("Error", "Failed to export report.")
+
+    def export_report_json(self):
+        """Export processing report to JSON"""
+        if not self.report.results:
+            messagebox.showinfo("No Data", "No processing results to export.")
+            return
+
+        file_path = filedialog.asksaveasfilename(
+            title="Save JSON Report",
+            defaultextension=".json",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")]
+        )
+
+        if file_path:
+            success = self.report.export_json(Path(file_path), include_summary=True)
+            if success:
+                messagebox.showinfo("Success", f"Report exported to:\n{file_path}")
+            else:
+                messagebox.showerror("Error", "Failed to export report.")
+
+    def show_report_summary(self):
+        """Show report summary dialog"""
+        if not self.report.results:
+            messagebox.showinfo("No Data", "No processing results available.")
+            return
+
+        summary = self.report.get_summary()
+
+        summary_text = f"""Processing Report Summary
+
+Model: {summary['model_name']}
+Task: {summary['model_task']}
+Duration: {summary['session_duration_seconds']}s
+
+Processed: {summary['processed']} / {summary['total_images']} images
+Successful: {summary['successful']} ({summary['success_rate']}%)
+Failed: {summary['failed']}
+
+Average time per image: {summary['average_time_per_image_seconds']}s
+Total processing time: {summary['total_processing_time_seconds']}s
+"""
+
+        if self.report.failed > 0:
+            failed_images = self.report.get_failed_images()
+            summary_text += f"\n\nFailed Images ({len(failed_images)}):\n"
+            for result in failed_images[:10]:
+                summary_text += f"  - {result['image_name']}: {result['error_message']}\n"
+            if len(failed_images) > 10:
+                summary_text += f"  ... and {len(failed_images) - 10} more\n"
+
+        messagebox.showinfo("Processing Report", summary_text)
+
+    def calculate_time_remaining(self, completed: int, total: int) -> str:
+        """Calculate estimated time remaining"""
+        if not self.processing_start_time or completed == 0:
+            return ""
+
+        elapsed = time.time() - self.processing_start_time
+        avg_time_per_item = elapsed / completed
+        remaining = total - completed
+        estimated_seconds = avg_time_per_item * remaining
+
+        if estimated_seconds < 60:
+            return f"~{int(estimated_seconds)}s remaining"
+        elif estimated_seconds < 3600:
+            minutes = int(estimated_seconds / 60)
+            return f"~{minutes}m remaining"
+        else:
+            hours = int(estimated_seconds / 3600)
+            minutes = int((estimated_seconds % 3600) / 60)
+            return f"~{hours}h {minutes}m remaining"
 
 def main():
     from logging_config import setup_logging
