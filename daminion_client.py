@@ -128,29 +128,98 @@ class DaminionClient:
             logging.exception(f"API request error: {url}")
             raise DaminionAPIError(f"Request error: {e}")
 
-    def get_media_items(self, page_index: int = 0, page_size: int = 50) -> Tuple[List[Dict], int]:
+    def get_total_count(self) -> int:
         """
-        Retrieve media items from Daminion.
-
-        Args:
-            page_index: Page number (0-based)
-            page_size: Number of items per page
+        Get total number of items in catalog.
 
         Returns:
-            Tuple of (list of media items, total count)
-
-        Note:
-            Current implementation returns totalCount but empty items array.
-            This may require additional API parameters or different endpoint.
+            Total number of media items
         """
-        endpoint = f"/api/MediaItems/Get?pageIndex={page_index}&pageSize={page_size}"
+        endpoint = "/api/MediaItems/GetCount"
+        response = self._make_request(endpoint)
+        total = response.get('data', 0)
+        logging.info(f"Total items in catalog: {total}")
+        return total
+
+    def get_media_items_by_ids(self, item_ids: List[int]) -> List[Dict]:
+        """
+        Retrieve specific media items by their IDs.
+
+        Args:
+            item_ids: List of item IDs to retrieve
+
+        Returns:
+            List of media items
+        """
+        if not item_ids:
+            return []
+
+        ids_str = ",".join(str(id) for id in item_ids)
+        endpoint = f"/api/MediaItems/GetByIds?ids={ids_str}"
         response = self._make_request(endpoint)
 
         items = response.get('mediaItems', [])
-        total = response.get('totalCount', 0)
+        logging.info(f"Retrieved {len(items)} items from {len(item_ids)} IDs")
+        return items
 
-        logging.info(f"Retrieved {len(items)} items (total: {total})")
-        return items, total
+    def get_media_items(self, start_id: int = 1, batch_size: int = 100) -> Tuple[List[Dict], int]:
+        """
+        Retrieve media items from Daminion by ID range.
+
+        Args:
+            start_id: Starting ID (1-based)
+            batch_size: Number of IDs to request
+
+        Returns:
+            Tuple of (list of media items, total count in catalog)
+
+        Note:
+            Daminion uses sequential IDs but not all IDs may exist.
+            This method requests a range and returns only existing items.
+        """
+        total_count = self.get_total_count()
+        item_ids = list(range(start_id, start_id + batch_size))
+        items = self.get_media_items_by_ids(item_ids)
+
+        logging.info(f"Retrieved {len(items)} items (catalog total: {total_count})")
+        return items, total_count
+
+    def get_all_items_paginated(self, batch_size: int = 100, max_items: Optional[int] = None) -> List[Dict]:
+        """
+        Retrieve all media items with pagination.
+
+        Args:
+            batch_size: Number of items to fetch per batch
+            max_items: Maximum number of items to retrieve (None = all)
+
+        Returns:
+            List of all media items
+        """
+        total_count = self.get_total_count()
+        all_items = []
+        current_id = 1
+
+        if max_items:
+            total_count = min(total_count, max_items)
+
+        logging.info(f"Fetching {total_count} items from Daminion...")
+
+        while len(all_items) < total_count and current_id < total_count + batch_size:
+            item_ids = list(range(current_id, min(current_id + batch_size, total_count + batch_size)))
+            batch_items = self.get_media_items_by_ids(item_ids)
+
+            all_items.extend(batch_items)
+            current_id += batch_size
+
+            if max_items and len(all_items) >= max_items:
+                all_items = all_items[:max_items]
+                break
+
+            if not batch_items:
+                break
+
+        logging.info(f"Retrieved total of {len(all_items)} items")
+        return all_items
 
     def get_untagged_items(self) -> Tuple[List[Dict], int]:
         """
@@ -158,6 +227,10 @@ class DaminionClient:
 
         Returns:
             Tuple of (list of media items, total count)
+
+        Note:
+            This endpoint returns items missing required metadata.
+            May return empty if all items are properly tagged.
         """
         endpoint = "/api/MediaItems/MyItems"
         response = self._make_request(endpoint)
@@ -289,13 +362,15 @@ class DaminionClient:
             if not self.authenticated:
                 self.authenticate()
 
-            items, total = self.get_media_items(page_index=0, page_size=1)
+            total = self.get_total_count()
+            test_items = self.get_media_items_by_ids([1, 2, 3, 4, 5])
 
             return {
                 'connected': True,
                 'server': self.base_url,
                 'username': self.username,
                 'total_items': total,
+                'sample_items': len(test_items),
                 'api_responding': True
             }
         except Exception as e:

@@ -334,18 +334,119 @@ class ImageTaggerGUI(tk.Tk):
             messagebox.showerror("Error", "Not connected to Daminion. Please connect first.")
             return
 
-        messagebox.showinfo(
-            "Daminion Mode - API Limitation",
-            "Note: The current Daminion API returns 200 items but an empty items array.\n\n"
-            "This integration is ready but requires:\n"
-            "1. Item IDs to be accessible via the API\n"
-            "2. Or a different endpoint/parameter to retrieve actual items\n\n"
-            "Once item IDs are available, the system will:\n"
-            "- Download thumbnails\n"
-            "- Process with AI models\n"
-            "- Commit tags back to Daminion"
+        task = self.model_task.get()
+        cats_str = self.categories_entry.get().strip()
+        keywords_str = self.keywords_entry.get().strip()
+
+        if not cats_str and task == config.MODEL_TASK_IMAGE_CLASSIFICATION:
+            messagebox.showerror("Error", "Categories are required for image classification.")
+            return
+
+        if not keywords_str and task == config.MODEL_TASK_ZERO_SHOT:
+            messagebox.showerror("Error", "Keywords are required for zero-shot classification.")
+            return
+
+        categories = [c.strip() for c in cats_str.split(",") if c.strip()]
+        keywords = [k.strip() for k in keywords_str.split(",") if k.strip()]
+
+        if not categories and task == config.MODEL_TASK_IMAGE_CLASSIFICATION:
+            messagebox.showerror("Error", "At least one valid category is required.")
+            return
+
+        if not keywords and task == config.MODEL_TASK_ZERO_SHOT:
+            messagebox.showerror("Error", "At least one valid keyword is required.")
+            return
+
+        response = messagebox.askyesno(
+            "Start Daminion Processing",
+            f"This will process items from Daminion DAMS.\n\n"
+            f"Total items in catalog: {self.daminion_client.get_total_count()}\n"
+            f"Processing mode: {task}\n\n"
+            "Process all items?"
         )
-        logging.warning("Daminion processing not yet fully implemented due to API limitations")
+
+        if not response:
+            return
+
+        self.start_button.config(state="disabled")
+        logging.info("Starting Daminion processing...")
+        threading.Thread(target=self.process_daminion_worker, args=(categories, keywords), daemon=True).start()
+
+    def process_daminion_worker(self, categories, keywords):
+        logging.info("Daminion processing worker started.")
+        model_task = self.model_task.get()
+
+        try:
+            self.q.put(("status_update", "Fetching items from Daminion..."))
+            items = self.daminion_client.get_all_items_paginated(batch_size=100, max_items=None)
+
+            if not items:
+                self.q.put(("error", "No items retrieved from Daminion"))
+                return
+
+            self.progress_bar["maximum"] = len(items)
+            self.progress_bar["value"] = 0
+            self.q.put(("status_update", f"Processing {len(items)} items..."))
+
+            completed_count = 0
+            for item in items:
+                if self.stop_event.is_set():
+                    break
+
+                try:
+                    item_id = item.get('id')
+                    filename = item.get('fileName', f'item_{item_id}')
+
+                    self.q.put(("status_update", f"Processing {filename}..."))
+
+                    thumb_path = self.daminion_client.download_thumbnail(item_id)
+                    if not thumb_path or not thumb_path.exists():
+                        logging.warning(f"Failed to download thumbnail for item {item_id}")
+                        continue
+
+                    from PIL import Image
+                    image = Image.open(thumb_path)
+
+                    result = None
+                    if model_task == config.MODEL_TASK_IMAGE_CLASSIFICATION:
+                        result = self.model(image, candidate_labels=categories)
+                        if result:
+                            category = result[0]['label']
+                            confidence = result[0]['score']
+                            logging.info(f"Item {item_id}: {category} ({confidence:.2f})")
+                            self.daminion_client.update_item_metadata(str(item_id), category=category)
+
+                    elif model_task == config.MODEL_TASK_ZERO_SHOT:
+                        result = self.model(image, candidate_labels=keywords)
+                        if result:
+                            detected_keywords = [r['label'] for r in result if r['score'] > 0.9]
+                            if detected_keywords:
+                                logging.info(f"Item {item_id}: {detected_keywords}")
+                                self.daminion_client.update_item_metadata(str(item_id), keywords=detected_keywords)
+
+                    elif model_task == config.MODEL_TASK_IMAGE_TO_TEXT:
+                        result = self.model(image)
+                        if result and len(result) > 0:
+                            generated_text = result[0].get('generated_text', '')
+                            generated_keywords = [w for w in generated_text.split() if len(w) > 3][:10]
+                            logging.info(f"Item {item_id}: {generated_keywords}")
+                            self.daminion_client.update_item_metadata(str(item_id), keywords=generated_keywords)
+
+                    completed_count += 1
+                    self.q.put(("progress", completed_count))
+
+                except Exception as e:
+                    logging.exception(f"Error processing Daminion item {item.get('id')}")
+                    self.q.put(("error", f"Failed to process item: {e}"))
+
+            self.daminion_client.cleanup_temp_files()
+            self.q.put(("progress_done", f"Finished processing {completed_count} Daminion items."))
+            logging.info("Daminion processing worker finished.")
+
+        except Exception as e:
+            logging.exception("Daminion processing worker failed")
+            self.q.put(("error", f"Daminion processing failed: {e}"))
+            self.start_button.config(state="normal")
 
     def process_images_worker(self, image_files, categories, keywords):
         logging.info("Image processing worker started.")

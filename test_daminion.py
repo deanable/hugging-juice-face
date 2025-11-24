@@ -35,13 +35,17 @@ def main():
             return
 
         # Get media items
-        print("\n2. Fetching media items...")
-        items, total = client.get_media_items(page_index=0, page_size=10)
+        print("\n2. Fetching first batch of media items (IDs 1-100)...")
+        items, total = client.get_media_items(start_id=1, batch_size=100)
         print(f"   Items returned: {len(items)}")
-        print(f"   Total count: {total}")
+        print(f"   Total count in catalog: {total}")
 
         if len(items) > 0:
-            print(f"\n3. Testing thumbnail download...")
+            print(f"\n3. Sample items:")
+            for i, item in enumerate(items[:3]):
+                print(f"   {i+1}. ID={item.get('id')}: {item.get('fileName', 'N/A')}")
+
+            print(f"\n4. Testing thumbnail download...")
             first_item = items[0]
             item_id = first_item.get('id')
 
@@ -49,14 +53,15 @@ def main():
                 thumb_path = client.download_thumbnail(item_id)
                 if thumb_path:
                     print(f"   ✓ Thumbnail saved to: {thumb_path}")
+                    print(f"   File exists: {thumb_path.exists()}")
+                    print(f"   File size: {thumb_path.stat().st_size} bytes")
                 else:
                     print(f"   ✗ Failed to download thumbnail")
         else:
-            print("\n   Note: No items returned to test thumbnail download")
-            print("   This may require different API parameters or endpoints")
+            print("\n   Note: No items returned")
 
         # Get untagged items
-        print("\n4. Fetching untagged items...")
+        print("\n5. Fetching untagged items...")
         untagged, untagged_total = client.get_untagged_items()
         print(f"   Untagged items: {len(untagged)} (total: {untagged_total})")
 

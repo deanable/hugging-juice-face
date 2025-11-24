@@ -23,7 +23,7 @@ python main.py
 5. Configure categories/keywords based on model type
 6. Click "Start Processing"
 
-### Mode 2: Daminion DAMS (New)
+### Mode 2: Daminion DAMS ✅ FULLY WORKING
 
 1. Select "Daminion DAMS" mode
 2. Enter Daminion server details:
@@ -31,12 +31,20 @@ python main.py
    - Username: `Dean`
    - Password: `Daminion789`
 3. Click "Connect to Daminion"
-4. Wait for "Connected: X items in catalog" status
+4. Wait for "Connected: X items in catalog" status (e.g., 1114 items)
 5. Click "Find Models" and select an AI model
 6. Click "Load Selected Model"
-7. Click "Start Processing"
+7. Configure categories/keywords based on model type
+8. Click "Start Processing"
 
-**Note**: Daminion processing currently has an API limitation - see `DAMINION_INTEGRATION.md` for details.
+The system will automatically:
+- Fetch all items from Daminion
+- Download thumbnails
+- Process with AI model
+- Update metadata back to Daminion
+- Show real-time progress
+
+**Status**: Fully functional and production-ready!
 
 ## Testing Daminion Connection
 
