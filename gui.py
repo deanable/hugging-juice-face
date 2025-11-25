@@ -242,13 +242,13 @@ class ImageTaggerGUI(tk.Tk):
         ttk.Label(conn_grid, text="Server URL:").grid(row=0, column=0, sticky="w", padx=(0, 10))
         self.daminion_url_entry = ttk.Entry(conn_grid, width=40)
         self.daminion_url_entry.grid(row=0, column=1, sticky="ew", pady=2)
-        self.daminion_url_entry.insert(0, self.config_manager.get('daminion_url',
-                                                                  'https://interiors.daminion.net'))
+        self.daminion_url_entry.insert(0, str(self.config_manager.get('daminion_url',
+                                                                  'https://interiors.daminion.net')))
 
         ttk.Label(conn_grid, text="Username:").grid(row=1, column=0, sticky="w", padx=(0, 10))
         self.daminion_username_entry = ttk.Entry(conn_grid, width=40)
         self.daminion_username_entry.grid(row=1, column=1, sticky="ew", pady=2)
-        self.daminion_username_entry.insert(0, self.config_manager.get('daminion_username', ''))
+        self.daminion_username_entry.insert(0, str(self.config_manager.get('daminion_username', '')))
 
         ttk.Label(conn_grid, text="Password:").grid(row=2, column=0, sticky="w", padx=(0, 10))
         self.daminion_password_entry = ttk.Entry(conn_grid, width=40, show="*")
@@ -382,8 +382,9 @@ class ImageTaggerGUI(tk.Tk):
 
         self.categories_entry = ttk.Entry(cat_frame, width=60)
         self.categories_entry.grid(row=0, column=1, rowspan=2, sticky="ew", pady=5)
-        self.categories_entry.insert(0, self.config_manager.get('default_categories',
-                                                                'Interior, Exterior, Furniture, Decor'))
+        # Ensure the default value is a string, even if config_manager returns None
+        default_categories = str(self.config_manager.get('default_categories', 'Interior, Exterior, Furniture, Decor'))
+        self.categories_entry.insert(0, default_categories)
 
         cat_frame.columnconfigure(1, weight=1)
 
