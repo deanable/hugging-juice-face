@@ -688,27 +688,48 @@ class ImageTaggerGUI(tk.Tk):
 
     def connect_daminion_worker(self, url, username, password):
         """Worker thread for Daminion connection"""
+        logging.info(f"[GUI] ========== DAMINION CONNECTION WORKER STARTED ==========")
+        logging.info(f"[GUI] URL: {url}")
+        logging.info(f"[GUI] Username: {username}")
+
         try:
+            logging.info(f"[GUI] Creating DaminionClient instance...")
             client = DaminionClient(url, username, password)
+
+            logging.info(f"[GUI] Testing connection to Daminion server...")
             status = client.test_connection()
+            logging.info(f"[GUI] Connection test result: {status}")
 
             if status['connected']:
+                logging.info(f"[GUI] \u2713 Connection successful!")
                 self.daminion_client = client
+
+                logging.debug(f"[GUI] Saving connection config...")
                 self.config_manager.set('daminion_url', url)
                 self.config_manager.set('daminion_username', username)
                 self.config_manager.save_config()
 
+                logging.info(f"[GUI] Notifying GUI of successful connection...")
                 self.q.put(("daminion_connected", status))
+
                 # fetch shared collections immediately in the worker thread
                 try:
+                    logging.info(f"[GUI] Fetching shared collections...")
                     cols = client.get_shared_collections(index=0, page_size=200)
+                    logging.info(f"[GUI] Retrieved {len(cols) if cols else 0} shared collections")
                     self.q.put(("daminion_collections", cols))
-                except Exception:
+                except Exception as coll_error:
+                    logging.warning(f"[GUI] Failed to fetch collections: {coll_error}")
                     pass
+
+                logging.info(f"[GUI] ========== CONNECTION WORKER COMPLETE ==========")
             else:
-                self.q.put(("daminion_error", status.get('error', 'Unknown error')))
+                error_msg = status.get('error', 'Unknown error')
+                logging.error(f"[GUI] \u2717 Connection failed: {error_msg}")
+                self.q.put(("daminion_error", error_msg))
+
         except Exception as e:
-            logging.exception("Daminion connection failed")
+            logging.exception(f"[GUI] \u2717 Daminion connection worker exception")
             self.q.put(("daminion_error", str(e)))
 
     def find_models(self):
@@ -982,84 +1003,146 @@ class ImageTaggerGUI(tk.Tk):
 
     def process_daminion_worker(self, categories, keywords, items=None):
         """Worker thread for processing Daminion items"""
-        logging.info("Daminion processing worker started.")
+        logging.info(f"[GUI] ========== DAMINION PROCESSING WORKER STARTED ==========")
+        logging.info(f"[GUI] Categories: {categories}")
+        logging.info(f"[GUI] Keywords: {keywords}")
+        logging.info(f"[GUI] Pre-filtered items: {len(items) if items else 'None (will fetch all)'}")
+
         model_task = self.model_task.get()
+        logging.info(f"[GUI] Model task: {model_task}")
 
         if not self.daminion_client:
+            logging.error(f"[GUI] \u2717 Daminion client not initialized!")
             self.q.put(("error", "Daminion client not initialized"))
             return
 
+        if not self.model:
+            logging.error(f"[GUI] \u2717 Model not loaded!")
+            self.q.put(("error", "Model not loaded"))
+            return
+
+        logging.info(f"[GUI] Daminion client: {self.daminion_client}")
+        logging.info(f"[GUI] Model: {self.model}")
+
         try:
             if items is None:
+                logging.info(f"[GUI] No pre-filtered items, fetching all from Daminion...")
                 self.q.put(("status_update", "Fetching items from Daminion..."))
                 items = self.daminion_client.get_all_items_paginated(batch_size=100, max_items=None)
+                logging.info(f"[GUI] \u2713 Fetched {len(items)} items from Daminion")
 
             if not items:
+                logging.error(f"[GUI] \u2717 No items retrieved from Daminion")
                 self.q.put(("error", "No items retrieved from Daminion"))
                 return
 
+            logging.info(f"[GUI] Setting up progress tracking for {len(items)} items...")
             self.q.put(("progress_max", len(items)))
             self.q.put(("status_update", f"Processing {len(items)} items..."))
 
             completed_count = 0
-            for item in items:
+            failed_count = 0
+
+            logging.info(f"[GUI] ========== STARTING ITEM PROCESSING LOOP ==========")
+
+            for idx, item in enumerate(items, 1):
                 if self.stop_event.is_set():
+                    logging.warning(f"[GUI] Stop event detected, aborting processing")
                     break
 
                 try:
                     item_id = item.get('id')
                     filename = item.get('fileName', f'item_{item_id}')
 
+                    logging.info(f"[GUI] --- Processing item {idx}/{len(items)}: {filename} (ID: {item_id}) ---")
                     self.q.put(("status_update", f"Processing {filename}..."))
 
+                    logging.debug(f"[GUI] Downloading thumbnail for item {item_id}...")
                     thumb_path = self.daminion_client.download_thumbnail(item_id)
+
                     if not thumb_path or not thumb_path.exists():
-                        logging.warning(f"Failed to download thumbnail for item {item_id}")
+                        logging.error(f"[GUI] \u2717 Failed to download thumbnail for item {item_id}")
+                        failed_count += 1
                         continue
+
+                    logging.debug(f"[GUI] \u2713 Thumbnail downloaded: {thumb_path}")
+                    logging.debug(f"[GUI] Opening image with PIL...")
 
                     from PIL import Image
                     image = Image.open(thumb_path)
+                    logging.debug(f"[GUI] \u2713 Image opened: {image.size}, {image.mode}")
 
                     result = None
+
                     if model_task == config.MODEL_TASK_IMAGE_CLASSIFICATION:
+                        logging.debug(f"[GUI] Running image classification with {len(categories)} categories...")
                         result = self.model(image, candidate_labels=categories)
+                        logging.debug(f"[GUI] \u2713 Classification result: {result}")
+
                         if result:
                             category = result[0]['label']
                             confidence = result[0]['score']
-                            logging.info(f"Item {item_id}: {category} ({confidence:.2f})")
+                            logging.info(f"[GUI] \u2713 Item {item_id}: Category={category} (confidence={confidence:.2f})")
+
+                            logging.debug(f"[GUI] Updating Daminion metadata for item {item_id}...")
                             self.daminion_client.update_item_metadata(str(item_id), category=category)
+                            logging.debug(f"[GUI] \u2713 Metadata updated")
 
                     elif model_task == config.MODEL_TASK_ZERO_SHOT:
+                        logging.debug(f"[GUI] Running zero-shot classification with {len(keywords)} keywords...")
                         result = self.model(image, candidate_labels=keywords)
+                        logging.debug(f"[GUI] \u2713 Zero-shot result: {result}")
+
                         if result:
                             detected_keywords = [r['label'] for r in result if r['score'] > 0.9]
                             if detected_keywords:
-                                logging.info(f"Item {item_id}: {detected_keywords}")
+                                logging.info(f"[GUI] \u2713 Item {item_id}: Keywords={detected_keywords}")
+
+                                logging.debug(f"[GUI] Updating Daminion metadata for item {item_id}...")
                                 self.daminion_client.update_item_metadata(str(item_id),
                                                                         keywords=detected_keywords)
+                                logging.debug(f"[GUI] \u2713 Metadata updated")
+                            else:
+                                logging.info(f"[GUI] Item {item_id}: No keywords above 0.9 threshold")
 
                     elif model_task == config.MODEL_TASK_IMAGE_TO_TEXT:
+                        logging.debug(f"[GUI] Running image-to-text generation...")
                         result = self.model(image)
+                        logging.debug(f"[GUI] \u2713 Image-to-text result: {result}")
+
                         if result and len(result) > 0:
                             generated_text = result[0].get('generated_text', '')
                             generated_keywords = [w for w in generated_text.split() if len(w) > 3][:10]
-                            logging.info(f"Item {item_id}: {generated_keywords}")
+                            logging.info(f"[GUI] \u2713 Item {item_id}: Generated keywords={generated_keywords}")
+
+                            logging.debug(f"[GUI] Updating Daminion metadata for item {item_id}...")
                             self.daminion_client.update_item_metadata(str(item_id),
                                                                     keywords=generated_keywords)
+                            logging.debug(f"[GUI] \u2713 Metadata updated")
 
                     completed_count += 1
+                    logging.info(f"[GUI] \u2713 Item {idx}/{len(items)} processed successfully")
                     self.q.put(("progress", completed_count))
 
                 except Exception as e:
-                    logging.exception(f"Error processing Daminion item {item.get('id')}")
+                    failed_count += 1
+                    logging.exception(f"[GUI] \u2717 Error processing Daminion item {item.get('id')}")
                     self.q.put(("error", f"Failed to process item: {e}"))
 
+            logging.info(f"[GUI] ========== ITEM PROCESSING LOOP COMPLETE ==========")
+            logging.info(f"[GUI] Total processed: {completed_count}")
+            logging.info(f"[GUI] Total failed: {failed_count}")
+
+            logging.info(f"[GUI] Cleaning up temp files...")
             self.daminion_client.cleanup_temp_files()
+
             self.q.put(("progress_done", f"Finished processing {completed_count} Daminion items."))
-            logging.info("Daminion processing worker finished.")
+            logging.info(f"[GUI] ========== DAMINION PROCESSING WORKER COMPLETE ==========")
 
         except Exception as e:
-            logging.exception("Daminion processing worker failed")
+            logging.exception(f"[GUI] \u2717 CRITICAL: Daminion processing worker failed")
+            logging.error(f"[GUI] Exception type: {type(e).__name__}")
+            logging.error(f"[GUI] Exception message: {str(e)}")
             self.q.put(("error", f"Daminion processing failed: {e}"))
 
     def process_images_worker(self, image_files, categories, keywords):

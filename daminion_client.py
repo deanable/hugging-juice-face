@@ -45,39 +45,50 @@ class DaminionClient:
         Raises:
             DaminionAPIError: If authentication fails
         """
+        logging.info(f"[DAMINION] Starting authentication to {self.base_url}...")
         try:
             params = urllib.parse.urlencode({
                 "userName": self.username,
                 "password": self.password
             })
             login_url = f"{self.base_url}/api/UserManager/Login?{params}"
+            logging.debug(f"[DAMINION] Login URL: {self.base_url}/api/UserManager/Login")
 
             request = urllib.request.Request(login_url, method='POST')
+            logging.debug(f"[DAMINION] Sending POST request to login endpoint...")
 
+            logging.debug(f"[DAMINION] Opening connection with 30s timeout...")
             with urllib.request.urlopen(request, timeout=30) as response:
+                logging.info(f"[DAMINION] Received response with status: {response.status}")
                 if response.status != 200:
                     raise DaminionAPIError(f"Login failed with status {response.status}")
 
                 # Extract session cookies
+                logging.debug(f"[DAMINION] Extracting session cookies from response headers...")
                 for header, value in response.headers.items():
                     if header.lower() == 'set-cookie':
                         cookie_parts = value.split(';')[0].split('=', 1)
                         if len(cookie_parts) == 2:
                             self.cookies[cookie_parts[0]] = cookie_parts[1]
+                            logging.debug(f"[DAMINION] Stored cookie: {cookie_parts[0]}")
 
                 if not self.cookies:
                     raise DaminionAPIError("No session cookies received from server")
 
                 self.authenticated = True
-                logging.info(f"Successfully authenticated to {self.base_url} as {self.username}")
+                logging.info(f"[DAMINION] ✓ Successfully authenticated to {self.base_url} as {self.username}")
+                logging.info(f"[DAMINION] Session has {len(self.cookies)} cookie(s)")
                 return True
 
         except urllib.error.HTTPError as e:
             error_msg = f"HTTP {e.code}: {e.reason}"
-            logging.error(f"Authentication failed: {error_msg}")
+            logging.error(f"[DAMINION] ✗ Authentication failed: {error_msg}")
             raise DaminionAPIError(f"Authentication failed: {error_msg}")
+        except urllib.error.URLError as e:
+            logging.error(f"[DAMINION] ✗ Network error during authentication: {e}")
+            raise DaminionAPIError(f"Network error: {e}")
         except Exception as e:
-            logging.exception("Authentication error")
+            logging.exception(f"[DAMINION] ✗ Unexpected authentication error")
             raise DaminionAPIError(f"Authentication error: {e}")
 
     def _get_cookie_header(self) -> str:
@@ -105,27 +116,42 @@ class DaminionClient:
             raise DaminionAPIError("Not authenticated. Call authenticate() first.")
 
         url = f"{self.base_url}{endpoint}"
+        logging.debug(f"[DAMINION] API Request: {method} {endpoint}")
 
         try:
             request_data = None
             if data and method == 'POST':
                 request_data = json.dumps(data).encode('utf-8')
+                logging.debug(f"[DAMINION] Request body size: {len(request_data)} bytes")
 
             request = urllib.request.Request(url, data=request_data, method=method)
             request.add_header('Cookie', self._get_cookie_header())
             request.add_header('Content-Type', 'application/json')
+            logging.debug(f"[DAMINION] Opening request with {timeout}s timeout...")
 
             with urllib.request.urlopen(request, timeout=timeout) as response:
+                logging.debug(f"[DAMINION] Response status: {response.status}")
                 body = response.read().decode('utf-8')
-                return json.loads(body)
+                logging.debug(f"[DAMINION] Response body size: {len(body)} bytes")
+                result = json.loads(body)
+                logging.debug(f"[DAMINION] ✓ API request successful")
+                return result
 
         except urllib.error.HTTPError as e:
             error_body = e.read().decode('utf-8') if e.fp else ''
             error_msg = f"HTTP {e.code}: {e.reason} - {error_body}"
-            logging.error(f"API request failed: {error_msg}")
+            logging.error(f"[DAMINION] ✗ API request failed: {error_msg}")
+            logging.error(f"[DAMINION] Failed endpoint: {method} {endpoint}")
             raise DaminionAPIError(error_msg)
+        except urllib.error.URLError as e:
+            logging.error(f"[DAMINION] ✗ Network error: {e}")
+            logging.error(f"[DAMINION] Failed endpoint: {method} {endpoint}")
+            raise DaminionAPIError(f"Network error: {e}")
+        except json.JSONDecodeError as e:
+            logging.error(f"[DAMINION] ✗ Invalid JSON response: {e}")
+            raise DaminionAPIError(f"Invalid JSON response: {e}")
         except Exception as e:
-            logging.exception(f"API request error: {url}")
+            logging.exception(f"[DAMINION] ✗ Unexpected API request error: {url}")
             raise DaminionAPIError(f"Request error: {e}")
 
     def get_total_count(self) -> int:
@@ -135,10 +161,11 @@ class DaminionClient:
         Returns:
             Total number of media items
         """
+        logging.info(f"[DAMINION] Fetching total item count...")
         endpoint = "/api/MediaItems/GetCount"
         response = self._make_request(endpoint)
         total = response.get('data', 0)
-        logging.info(f"Total items in catalog: {total}")
+        logging.info(f"[DAMINION] ✓ Total items in catalog: {total}")
         return total
 
     def get_media_items_by_ids(self, item_ids: List[int]) -> List[Dict]:
@@ -195,30 +222,47 @@ class DaminionClient:
         Returns:
             List of all media items
         """
+        logging.info(f"[DAMINION] ========== STARTING PAGINATED FETCH ==========")
+        logging.info(f"[DAMINION] Batch size: {batch_size}, Max items: {max_items or 'all'}")
+
         total_count = self.get_total_count()
         all_items = []
         current_id = 1
+        batch_num = 0
 
         if max_items:
             total_count = min(total_count, max_items)
 
-        logging.info(f"Fetching {total_count} items from Daminion...")
+        logging.info(f"[DAMINION] Target: {total_count} items from Daminion")
+        logging.info(f"[DAMINION] Estimated batches: {(total_count // batch_size) + 1}")
 
         while len(all_items) < total_count and current_id < total_count + batch_size:
+            batch_num += 1
+            logging.info(f"[DAMINION] --- Batch {batch_num} ---")
+            logging.info(f"[DAMINION] Requesting IDs {current_id} to {min(current_id + batch_size - 1, total_count + batch_size - 1)}")
+
             item_ids = list(range(current_id, min(current_id + batch_size, total_count + batch_size)))
+            logging.debug(f"[DAMINION] Fetching {len(item_ids)} item IDs...")
+
             batch_items = self.get_media_items_by_ids(item_ids)
+            logging.info(f"[DAMINION] ✓ Received {len(batch_items)} items in batch {batch_num}")
 
             all_items.extend(batch_items)
             current_id += batch_size
 
+            logging.info(f"[DAMINION] Progress: {len(all_items)}/{total_count} items ({len(all_items)*100//total_count}%)")
+
             if max_items and len(all_items) >= max_items:
                 all_items = all_items[:max_items]
+                logging.info(f"[DAMINION] Reached max_items limit, stopping")
                 break
 
             if not batch_items:
+                logging.warning(f"[DAMINION] Empty batch received, stopping pagination")
                 break
 
-        logging.info(f"Retrieved total of {len(all_items)} items")
+        logging.info(f"[DAMINION] ========== FETCH COMPLETE ==========")
+        logging.info(f"[DAMINION] ✓ Retrieved total of {len(all_items)} items in {batch_num} batches")
         return all_items
 
     def get_shared_collections(self, index: int = 0, page_size: int = 100) -> List[Dict]:
@@ -327,22 +371,27 @@ class DaminionClient:
             raise DaminionAPIError("Not authenticated")
 
         url = f"{self.base_url}/api/thumbnail/{item_id}/{width}/{height}"
+        logging.debug(f"[DAMINION] Downloading thumbnail for item {item_id}...")
 
         try:
             request = urllib.request.Request(url)
             request.add_header('Cookie', self._get_cookie_header())
 
+            logging.debug(f"[DAMINION] Opening thumbnail request with 30s timeout...")
             with urllib.request.urlopen(request, timeout=30) as response:
                 # Save to temp file
                 temp_file = self.temp_dir / f"{item_id}.jpg"
-                with open(temp_file, 'wb') as f:
-                    f.write(response.read())
+                data = response.read()
+                logging.debug(f"[DAMINION] Downloaded {len(data)} bytes")
 
-                logging.info(f"Downloaded thumbnail for item {item_id}")
+                with open(temp_file, 'wb') as f:
+                    f.write(data)
+
+                logging.debug(f"[DAMINION] ✓ Saved thumbnail to {temp_file}")
                 return temp_file
 
         except Exception as e:
-            logging.error(f"Failed to download thumbnail for {item_id}: {e}")
+            logging.error(f"[DAMINION] ✗ Failed to download thumbnail for {item_id}: {e}")
             return None
 
     def batch_update_tags(self, item_ids: List[str], tags: Dict[str, List[str]]) -> bool:
@@ -397,6 +446,9 @@ class DaminionClient:
         Returns:
             True if successful, False otherwise
         """
+        logging.debug(f"[DAMINION] Updating metadata for item {item_id}")
+        logging.debug(f"[DAMINION] Category: {category}, Keywords: {keywords}")
+
         tags = {}
 
         if category:
@@ -406,10 +458,15 @@ class DaminionClient:
             tags['Keywords'] = keywords
 
         if not tags:
-            logging.warning(f"No metadata to update for item {item_id}")
+            logging.warning(f"[DAMINION] No metadata to update for item {item_id}")
             return False
 
-        return self.batch_update_tags([item_id], tags)
+        result = self.batch_update_tags([item_id], tags)
+        if result:
+            logging.debug(f"[DAMINION] ✓ Metadata updated for item {item_id}")
+        else:
+            logging.warning(f"[DAMINION] ✗ Failed to update metadata for item {item_id}")
+        return result
 
     def cleanup_temp_files(self):
         """Remove all cached thumbnail files."""
