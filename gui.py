@@ -517,26 +517,26 @@ class ImageTaggerGUI(tk.Tk):
         # Step 1: Source selected?
         if self.processing_mode == "local":
             if self.image_dir:
-                self.step1_status.config(text="✓ Source ready: Local directory selected",
+                self.step1_status.config(text="[OK] Source ready: Local directory selected",
                                         foreground="green")
             else:
-                self.step1_status.config(text="⚠ Please select an image directory",
+                self.step1_status.config(text="[WARN] Please select an image directory",
                                         foreground="orange")
         else:
             if self.daminion_client:
-                self.step1_status.config(text="✓ Source ready: Connected to Daminion",
+                self.step1_status.config(text="[OK] Source ready: Connected to Daminion",
                                         foreground="green")
             else:
-                self.step1_status.config(text="⚠ Please connect to Daminion server",
+                self.step1_status.config(text="[WARN] Please connect to Daminion server",
                                         foreground="orange")
 
         # Step 2: Model loaded?
         if self.model:
             model_name = self.model.model.name_or_path
-            self.step2_status.config(text=f"✓ Model loaded: {model_name}",
+            self.step2_status.config(text=f"[OK] Model loaded: {model_name}",
                                     foreground="green")
         else:
-            self.step2_status.config(text="⚠ Please search for and load a model",
+            self.step2_status.config(text="[WARN] Please search for and load a model",
                                     foreground="orange")
 
         # Step 3: Configuration ready?
@@ -545,16 +545,16 @@ class ImageTaggerGUI(tk.Tk):
         kws = self.keywords_entry.get().strip()
 
         if task == config.MODEL_TASK_IMAGE_TO_TEXT:
-            self.step3_status.config(text="✓ Configuration ready: Image-to-Text mode (auto)",
+            self.step3_status.config(text="[OK] Configuration ready: Image-to-Text mode (auto)",
                                     foreground="green")
         elif task == config.MODEL_TASK_IMAGE_CLASSIFICATION and cats:
-            self.step3_status.config(text="✓ Configuration ready: Categories entered",
+            self.step3_status.config(text="[OK] Configuration ready: Categories entered",
                                     foreground="green")
         elif task == config.MODEL_TASK_ZERO_SHOT and kws:
-            self.step3_status.config(text="✓ Configuration ready: Keywords entered",
+            self.step3_status.config(text="[OK] Configuration ready: Keywords entered",
                                     foreground="green")
         else:
-            self.step3_status.config(text="⚠ Please enter categories or keywords",
+            self.step3_status.config(text="[WARN] Please enter categories or keywords",
                                     foreground="orange")
 
         # Step 4: Ready to process?
@@ -566,7 +566,7 @@ class ImageTaggerGUI(tk.Tk):
 
         if source_ready and self.model and config_ready:
             self.start_button.config(state="normal")
-            self.step4_status.config(text="✓ Ready to process!", foreground="green")
+            self.step4_status.config(text="[OK] Ready to process!", foreground="green")
         else:
             self.start_button.config(state="disabled")
             missing = []
@@ -576,7 +576,7 @@ class ImageTaggerGUI(tk.Tk):
                 missing.append("AI model")
             if not config_ready:
                 missing.append("configuration")
-            self.step4_status.config(text=f"⚠ Complete previous steps: {', '.join(missing)}",
+            self.step4_status.config(text=f"[WARN] Complete previous steps: {', '.join(missing)}",
                                     foreground="orange")
 
     def update_task_description(self):
@@ -1036,6 +1036,43 @@ class ImageTaggerGUI(tk.Tk):
                 self.q.put(("error", "No items retrieved from Daminion"))
                 return
 
+            # Validate items structure
+            logging.info(f"[GUI] Validating items structure...")
+            logging.info(f"[GUI] Items type: {type(items)}")
+            logging.info(f"[GUI] Items length: {len(items)}")
+            if items:
+                logging.info(f"[GUI] First item type: {type(items[0])}")
+                logging.info(f"[GUI] First item sample: {str(items[0])[:200] if isinstance(items[0], dict) else type(items[0])}")
+
+            # Flatten if items is a list of lists
+            if items and isinstance(items[0], list):
+                logging.warning(f"[GUI] Items is a list of lists, flattening...")
+                flat_items = []
+                for sublist in items:
+                    if isinstance(sublist, list):
+                        flat_items.extend(sublist)
+                    else:
+                        flat_items.append(sublist)
+                items = flat_items
+                logging.info(f"[GUI] Flattened to {len(items)} items")
+
+            # Validate each item is a dict
+            valid_items = []
+            for i, item in enumerate(items):
+                if isinstance(item, dict):
+                    valid_items.append(item)
+                else:
+                    logging.warning(f"[GUI] Skipping item {i}: not a dict, type={type(item)}")
+
+            items = valid_items
+            logging.info(f"[GUI] Valid items after filtering: {len(items)}")
+
+            if not items:
+                logging.error(f"[GUI] [ERROR] No valid items after validation")
+                self.q.put(("error", "No valid items to process"))
+                return
+
+
             logging.info(f"[GUI] Setting up progress tracking for {len(items)} items...")
             self.q.put(("progress_max", len(items)))
             self.q.put(("status_update", f"Processing {len(items)} items..."))
@@ -1223,7 +1260,7 @@ class ImageTaggerGUI(tk.Tk):
                 model_ids, downloaded_models = data
                 for model_id in model_ids:
                     if model_id in downloaded_models:
-                        self.model_listbox.insert(tk.END, f"{model_id} (✓ cached)")
+                        self.model_listbox.insert(tk.END, f"{model_id} ([OK] cached)")
                         self.model_listbox.itemconfig(tk.END, fg='green')
                     else:
                         self.model_listbox.insert(tk.END, model_id)
