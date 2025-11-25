@@ -788,6 +788,10 @@ class ImageTaggerGUI(tk.Tk):
 
     def start_local_processing(self):
         """Start processing local files"""
+        if not self.image_dir:
+            messagebox.showerror("Error", "Please select an image directory first.")
+            return
+
         task = self.model_task.get()
         cats_str = self.categories_entry.get().strip()
         keywords_str = self.keywords_entry.get().strip()
@@ -980,6 +984,10 @@ class ImageTaggerGUI(tk.Tk):
         """Worker thread for processing Daminion items"""
         logging.info("Daminion processing worker started.")
         model_task = self.model_task.get()
+
+        if not self.daminion_client:
+            self.q.put(("error", "Daminion client not initialized"))
+            return
 
         try:
             if items is None:
@@ -1243,6 +1251,13 @@ class ImageTaggerGUI(tk.Tk):
                 self._update_step_states()
                 logging.info(f"Daminion connected: {status['total_items']} items")
 
+            elif message_type == "daminion_error":
+                self.daminion_status_label.config(text=f"● Connection failed", foreground="red")
+                self.daminion_connect_button.config(state="normal")
+                messagebox.showerror("Daminion Connection Error",
+                                   f"Failed to connect to Daminion:\n\n{data}")
+                self._update_step_states()
+
             elif message_type == "daminion_collections":
                 # populate combobox with names and keep full collection objects for selection
                 cols = data or []
@@ -1269,6 +1284,11 @@ class ImageTaggerGUI(tk.Tk):
                 except Exception:
                     pass
 
+        except queue.Empty:
+            pass
+        finally:
+            self.after(100, self.process_queue)
+
     def refresh_daminion_collections(self):
         """Start background refresh of shared collections and update the combobox."""
         if not self.daminion_client:
@@ -1281,24 +1301,16 @@ class ImageTaggerGUI(tk.Tk):
 
     def refresh_daminion_collections_worker(self):
         try:
+            if not self.daminion_client:
+                self.q.put(("error", "Daminion client not initialized"))
+                return
+
             cols = self.daminion_client.get_shared_collections(index=0, page_size=200)
             self.q.put(("daminion_collections", cols))
             self.q.put(("status_update", f"Found {len(cols)} shared collections on server."))
         except Exception as e:
             logging.exception("Failed to refresh collections")
             self.q.put(("error", f"Failed to fetch collections: {e}"))
-            
-            elif message_type == "daminion_error":
-                self.daminion_status_label.config(text=f"● Connection failed", foreground="red")
-                self.daminion_connect_button.config(state="normal")
-                messagebox.showerror("Daminion Connection Error",
-                                   f"Failed to connect to Daminion:\n\n{data}")
-                self._update_step_states()
-
-        except queue.Empty:
-            pass
-        finally:
-            self.after(100, self.process_queue)
 
     def show_cache_path(self):
         """Show cache path dialog"""
