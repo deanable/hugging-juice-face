@@ -1232,7 +1232,7 @@ class ImageTaggerGUI(tk.Tk):
                 self.progress_label.config(text=f"{max_val} / {max_val} images processed - Complete!")
                 self.time_label.config(text="Done!")
 
-                elif message_type == "daminion_connected":
+            elif message_type == "daminion_connected":
                 status = data
                 self.daminion_status_label.config(
                     text=f"● Connected: {status['total_items']} items in catalog",
@@ -1286,7 +1286,7 @@ class ImageTaggerGUI(tk.Tk):
         except Exception as e:
             logging.exception("Failed to refresh collections")
             self.q.put(("error", f"Failed to fetch collections: {e}"))
-
+            
             elif message_type == "daminion_error":
                 self.daminion_status_label.config(text=f"● Connection failed", foreground="red")
                 self.daminion_connect_button.config(state="normal")
