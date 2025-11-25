@@ -221,6 +221,75 @@ class DaminionClient:
         logging.info(f"Retrieved total of {len(all_items)} items")
         return all_items
 
+    def get_shared_collections(self, index: int = 0, page_size: int = 100) -> List[Dict]:
+        """Retrieve list of shared collections available on the server.
+
+        Returns a list of collection metadata dictionaries. Uses the
+        /api/SharedCollection/GetCollections endpoint.
+        """
+        endpoint = f"/api/SharedCollection/GetCollections?index={index}&pageSize={page_size}"
+        try:
+            response = self._make_request(endpoint)
+            # response shape may vary; try common keys
+            collections = response.get('collections') or response.get('items') or response.get('data') or response
+            if isinstance(collections, dict):
+                # sometimes API wraps in data/results
+                return list(collections.values())
+            return collections if isinstance(collections, list) else []
+        except Exception as e:
+            logging.exception("Failed to fetch shared collections")
+            return []
+
+    def get_shared_collection_items(self, collection_id: str | int, index: int = 0, page_size: int = 200) -> List[Dict]:
+        """Retrieve items for a shared collection.
+
+        Calls /api/SharedCollection/GetItems and expects a collection identifier value
+        to be passed as a parameter. The exact server-side parameters may vary by
+        Daminion version; we attempt common query names.
+        """
+        # try a couple of common parameter formats to support different server versions
+        tried = [
+            f"/api/SharedCollection/GetItems?id={collection_id}&index={index}&pageSize={page_size}",
+            f"/api/SharedCollection/GetItems?collectionId={collection_id}&index={index}&pageSize={page_size}",
+            f"/api/SharedCollection/PublicItems/{collection_id}/{index}/{page_size}/0/true"
+        ]
+
+        for endpoint in tried:
+            try:
+                response = self._make_request(endpoint)
+                items = response.get('mediaItems') or response.get('items') or response.get('data') or response
+                if isinstance(items, dict):
+                    return list(items.values())
+                if isinstance(items, list):
+                    return items
+            except Exception:
+                continue
+
+        logging.warning(f"Could not retrieve items for shared collection {collection_id}")
+        return []
+
+    def get_flagged_items(self, batch_size: int = 200, max_items: Optional[int] = None) -> List[Dict]:
+        """Return items that appear to be flagged or rejected.
+
+        This is implemented client-side using heuristics (filename / metadata checks)
+        because not all Daminion servers provide a dedicated 'flagged' endpoint.
+        """
+        items = self.get_all_items_paginated(batch_size=batch_size, max_items=max_items)
+
+        def is_flagged_item(it: Dict) -> bool:
+            fname = (it.get('fileName') or '').lower()
+            if any(tok in fname for tok in ['flag', 'reject', 'rejected']):
+                return True
+            for k in ('status', 'tags', 'keywords', 'description'):
+                v = it.get(k)
+                if isinstance(v, str) and any(tok in v.lower() for tok in ['flag', 'reject', 'rejected']):
+                    return True
+                if isinstance(v, list) and any(isinstance(x, str) and any(tok in x.lower() for tok in ['flag', 'reject', 'rejected']) for x in v):
+                    return True
+            return False
+
+        return [it for it in items if is_flagged_item(it)]
+
     def get_untagged_items(self) -> Tuple[List[Dict], int]:
         """
         Retrieve media items that don't have all required metadata.

@@ -21,6 +21,65 @@ from daminion_client import DaminionClient, DaminionAPIError
 from report_generator import ProcessingReport
 import time
 
+
+def filter_local_images(all_images, scope: str, collection_path: Path | None = None):
+    """Return a filtered list of local image Path objects according to scope.
+
+    scope: 'collection' | 'flagged' | 'untagged' (untagged -> returns all_images unchanged)
+    collection_path: Path object pointing to a sub-folder when scope == 'collection'
+    """
+    if scope == 'collection':
+        if collection_path is None:
+            return []
+        return [p for p in all_images if collection_path in p.parents or str(p).startswith(str(collection_path))]
+
+    if scope == 'flagged':
+        def is_flagged(p: Path) -> bool:
+            name = p.name.lower()
+            if 'flag' in name or 'reject' in name or 'rejected' in name:
+                return True
+            for part in p.parents:
+                pn = part.name.lower()
+                if 'flag' in pn or 'reject' in pn or 'rejected' in pn:
+                    return True
+            return False
+
+        return [p for p in all_images if is_flagged(p)]
+
+    # default or 'untagged' -> return everything; the resume/unprocessed behavior is handled elsewhere
+    return list(all_images)
+
+
+def filter_daminion_items(items, scope: str, collection_name: str | None = None):
+    """Return a filtered list of Daminion item dicts according to scope.
+
+    items: list of dicts from Daminion API
+    scope: 'collection' | 'flagged' | 'untagged' (untagged -> return items unchanged)
+    collection_name: substring to match when scope == 'collection'
+    """
+    if scope == 'collection':
+        if not collection_name:
+            return []
+        cn = collection_name.lower()
+        return [it for it in items if cn in (it.get('fileName') or '').lower() or cn in str(it.get('id', '')).lower()]
+
+    if scope == 'flagged':
+        def is_flagged_item(it: dict) -> bool:
+            fname = (it.get('fileName') or '').lower()
+            if any(tok in fname for tok in ['flag', 'reject', 'rejected']):
+                return True
+            for k in ('status', 'tags', 'keywords', 'description'):
+                v = it.get(k)
+                if isinstance(v, str) and any(tok in v.lower() for tok in ['flag', 'reject', 'rejected']):
+                    return True
+                if isinstance(v, list) and any(isinstance(x, str) and any(tok in x.lower() for tok in ['flag', 'reject', 'rejected']) for x in v):
+                    return True
+            return False
+
+        return [it for it in items if is_flagged_item(it)]
+
+    return list(items)
+
 class ImageTaggerGUI(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -46,6 +105,11 @@ class ImageTaggerGUI(tk.Tk):
         self._create_widgets()
         self._create_menu()
         self._update_step_states()
+        # ensure scope-related controls update to the new mode (local vs daminion)
+        try:
+            self.on_scope_change()
+        except Exception:
+            pass
 
         self.after(100, self.process_queue)
         logging.info("GUI initialized with step-by-step workflow.")
@@ -366,6 +430,54 @@ class ImageTaggerGUI(tk.Tk):
         ttk.Label(frame, text="Ready to tag your images with AI!",
                  font=("Arial", 10, "bold")).pack(anchor="w", pady=(0, 10))
 
+        # Processing scope (collection / flagged / untagged)
+        scope_frame = ttk.Frame(frame)
+        scope_frame.pack(fill="x", pady=(10, 5))
+
+        ttk.Label(scope_frame, text="Process scope:", font=("Arial", 9, "bold")).pack(anchor="w")
+
+        self.scope_var = tk.StringVar(value="untagged")
+
+        rb_frame = ttk.Frame(scope_frame)
+        rb_frame.pack(fill="x", padx=(20, 0))
+
+        self.scope_collection_rb = ttk.Radiobutton(rb_frame, text="A collection",
+                               variable=self.scope_var, value="collection",
+                               command=self.on_scope_change)
+        self.scope_collection_rb.pack(anchor="w")
+
+        self.scope_flagged_rb = ttk.Radiobutton(rb_frame, text="Flagged / Rejected images",
+                            variable=self.scope_var, value="flagged",
+                            command=self.on_scope_change)
+        self.scope_flagged_rb.pack(anchor="w", pady=(5, 0))
+
+        self.scope_untagged_rb = ttk.Radiobutton(rb_frame, text="All untagged images",
+                             variable=self.scope_var, value="untagged",
+                             command=self.on_scope_change)
+        self.scope_untagged_rb.pack(anchor="w", pady=(5, 0))
+
+        # Extra controls shown when scope==collection
+        self.collection_selector_frame = ttk.Frame(scope_frame)
+        self.collection_selector_frame.pack(fill="x", pady=(5, 0))
+
+        self.collection_path = None
+        self.collection_path_label = ttk.Label(self.collection_selector_frame, text="No collection selected", foreground="gray")
+        self.collection_path_label.pack(side="left", padx=(20, 0))
+
+        self.select_collection_btn = ttk.Button(self.collection_selector_frame, text="Select Collection (sub-folder)",
+                               command=self.select_collection)
+        self.select_collection_btn.pack(side="left", padx=(5, 10))
+
+        # For Daminion, allow user to pick a shared-collection (populated after connecting)
+        self.daminion_collections = []
+        self.daminion_collection_combo = ttk.Combobox(self.collection_selector_frame, values=[], state='disabled', width=40)
+        self.daminion_collection_combo.pack(side="left", padx=(5, 0))
+
+        self.refresh_collections_btn = ttk.Button(self.collection_selector_frame, text="Refresh collections",
+                              command=self.refresh_daminion_collections)
+        self.refresh_collections_btn.pack(side="left", padx=(6, 0))
+
+        # Start Button
         self.start_button = ttk.Button(frame, text="▶️  Start Processing Images",
                                        command=self.start_processing,
                                        state="disabled", width=30)
@@ -505,6 +617,27 @@ class ImageTaggerGUI(tk.Tk):
 
         self._update_step_states()
 
+    def on_scope_change(self):
+        """Handle showing/hiding controls depending on the selected processing scope."""
+        scope = self.scope_var.get()
+        if scope == 'collection':
+            # show collection selectors
+            self.collection_selector_frame.pack(fill="x", pady=(5, 0))
+            # default visibility: keep both local selection label and daminion entry visible but greyed
+            if self.processing_mode == 'local':
+                self.collection_path_label.config(foreground='black' if self.collection_path else 'gray')
+                self.daminion_collection_combo.config(state='disabled')
+                self.refresh_collections_btn.config(state='disabled')
+            else:
+                # daminion: enable entry
+                self.collection_path_label.config(foreground='gray')
+                self.daminion_collection_combo.config(state='readonly')
+                self.refresh_collections_btn.config(state='normal')
+        else:
+            # hide additional controls
+            self.collection_selector_frame.pack_forget()
+
+
     def select_directory(self):
         """Select local image directory"""
         directory = filedialog.askdirectory(title="Select Image Directory")
@@ -513,6 +646,28 @@ class ImageTaggerGUI(tk.Tk):
             self.dir_label.config(text=str(self.image_dir), foreground="black")
             logging.info(f"Selected directory: {self.image_dir}")
             self._update_step_states()
+
+    def select_collection(self):
+        """Select a sub-folder within the currently chosen local image directory.
+
+        This is used when the user picks 'A collection' as the processing scope.
+        """
+        if not self.image_dir:
+            messagebox.showerror("Error", "Please select an image directory first (Step 1).")
+            return
+
+        directory = filedialog.askdirectory(title="Select Collection (sub-folder)", initialdir=str(self.image_dir))
+        if directory:
+            # ensure selection is inside image_dir
+            try:
+                sel = Path(directory).resolve()
+                if str(sel).startswith(str(self.image_dir.resolve())):
+                    self.collection_path = sel
+                    self.collection_path_label.config(text=str(self.collection_path), foreground='black')
+                else:
+                    messagebox.showerror("Error", "Please select a sub-folder inside the chosen image directory.")
+            except Exception:
+                messagebox.showerror("Error", "Failed to select collection path.")
 
     def connect_daminion(self):
         """Connect to Daminion server"""
@@ -543,6 +698,12 @@ class ImageTaggerGUI(tk.Tk):
                 self.config_manager.save_config()
 
                 self.q.put(("daminion_connected", status))
+                # fetch shared collections immediately in the worker thread
+                try:
+                    cols = client.get_shared_collections(index=0, page_size=200)
+                    self.q.put(("daminion_collections", cols))
+                except Exception:
+                    pass
             else:
                 self.q.put(("daminion_error", status.get('error', 'Unknown error')))
         except Exception as e:
@@ -659,7 +820,11 @@ class ImageTaggerGUI(tk.Tk):
             return
 
         saved_job = self.progress_tracker.load_job()
-        if saved_job and saved_job.get("directory") == str(self.image_dir):
+        scope = getattr(self, 'scope_var', None) and self.scope_var.get() or 'untagged'
+
+        # When filtering by collection/flagged we will ignore previous saved job and work from
+        # the filtered set. For untagged (default) we preserve the existing resume logic.
+        if scope == 'untagged' and saved_job and saved_job.get("directory") == str(self.image_dir):
             resume = messagebox.askyesno(
                 "Resume Job",
                 f"Found incomplete job from {saved_job.get('started_at', 'unknown')}\n"
@@ -676,8 +841,30 @@ class ImageTaggerGUI(tk.Tk):
                     self.progress_tracker.complete_job()
                     return
         else:
-            self.progress_tracker.clear()
-            image_files = all_image_files
+            # For collection or flagged scope, filter the full image list accordingly
+            if scope == 'collection':
+                if not self.collection_path:
+                    messagebox.showerror("Error", "Please select a collection sub-folder to process.")
+                    return
+
+                image_files = [p for p in all_image_files if self.collection_path in p.parents or str(p).startswith(str(self.collection_path))]
+            elif scope == 'flagged':
+                def is_flagged(p):
+                    name = p.name.lower()
+                    if 'flag' in name or 'reject' in name or 'rejected' in name:
+                        return True
+                    # check parent folder names
+                    for part in p.parents:
+                        pn = part.name.lower()
+                        if 'flag' in pn or 'reject' in pn or 'rejected' in pn:
+                            return True
+                    return False
+
+                image_files = [p for p in all_image_files if is_flagged(p)]
+            else:
+                # default: untagged behavior or fallback to everything
+                self.progress_tracker.clear()
+                image_files = all_image_files
 
         model_name = self.model.model.name_or_path if self.model else "unknown"
         self.progress_tracker.start_job(self.image_dir, len(image_files), model_name, task)
@@ -723,30 +910,80 @@ class ImageTaggerGUI(tk.Tk):
             messagebox.showerror("Error", "At least one valid keyword is required.")
             return
 
-        response = messagebox.askyesno(
-            "Start Daminion Processing",
-            f"This will process items from Daminion DAMS.\n\n"
-            f"Total items in catalog: {self.daminion_client.get_total_count()}\n"
-            f"Processing mode: {task}\n\n"
-            "Process all items?"
-        )
+        scope = getattr(self, 'scope_var', None) and self.scope_var.get() or 'untagged'
 
-        if not response:
-            return
+        items_to_process = None
+
+        if scope == 'untagged':
+            items, total = self.daminion_client.get_untagged_items()
+            if not items:
+                messagebox.showinfo("Info", "No untagged items found in Daminion.")
+                return
+            if not messagebox.askyesno("Start Daminion Processing",
+                                       f"This will process {len(items)} untagged items from Daminion. Proceed?"):
+                return
+            items_to_process = items
+
+        elif scope == 'flagged':
+            # use a Daminion client helper that applies server fetch + heuristics
+            filtered = self.daminion_client.get_flagged_items(batch_size=200, max_items=None)
+            if not filtered:
+                messagebox.showinfo("Info", "No flagged/rejected items found in Daminion.")
+                return
+            if not messagebox.askyesno("Start Daminion Processing",
+                                       f"This will process {len(filtered)} flagged/rejected items from Daminion. Proceed?"):
+                return
+            items_to_process = filtered
+
+        elif scope == 'collection':
+            # for Daminion we prefer using an explicit shared collection selection
+            if not self.daminion_collections:
+                messagebox.showerror("Error", "No Daminion collections are available. Refresh collections or connect to the server.")
+                return
+
+            sel_index = self.daminion_collection_combo.current()
+            if sel_index is None or sel_index < 0:
+                messagebox.showerror("Error", "Please select a shared collection to process from Daminion.")
+                return
+
+            col = self.daminion_collections[sel_index]
+            collection_id = col.get('id') or col.get('code') or col.get('collectionId')
+            if not collection_id:
+                messagebox.showerror("Error", "Selected collection does not have a usable identifier.")
+                return
+
+            items = self.daminion_client.get_shared_collection_items(collection_id, index=0, page_size=500)
+            if not items:
+                messagebox.showinfo("Info", f"No items were found in the selected shared collection.")
+                return
+
+            if not messagebox.askyesno("Start Daminion Processing",
+                                       f"This will process {len(items)} items from the selected shared collection. Proceed?"):
+                return
+
+            items_to_process = items
+
+        if not items_to_process:
+            # fallback guard
+            if not messagebox.askyesno("Start Daminion Processing",
+                                       f"This will process items from Daminion.\n\nTotal items in catalog: {self.daminion_client.get_total_count()}\nProcessing mode: {task}\n\nProcess all items?"):
+                return
+            items_to_process = self.daminion_client.get_all_items_paginated(batch_size=100, max_items=None)
 
         self.start_button.config(state="disabled")
         logging.info("Starting Daminion processing...")
         threading.Thread(target=self.process_daminion_worker,
-                        args=(categories, keywords), daemon=True).start()
+                         args=(categories, keywords, items_to_process), daemon=True).start()
 
-    def process_daminion_worker(self, categories, keywords):
+    def process_daminion_worker(self, categories, keywords, items=None):
         """Worker thread for processing Daminion items"""
         logging.info("Daminion processing worker started.")
         model_task = self.model_task.get()
 
         try:
-            self.q.put(("status_update", "Fetching items from Daminion..."))
-            items = self.daminion_client.get_all_items_paginated(batch_size=100, max_items=None)
+            if items is None:
+                self.q.put(("status_update", "Fetching items from Daminion..."))
+                items = self.daminion_client.get_all_items_paginated(batch_size=100, max_items=None)
 
             if not items:
                 self.q.put(("error", "No items retrieved from Daminion"))
@@ -995,7 +1232,7 @@ class ImageTaggerGUI(tk.Tk):
                 self.progress_label.config(text=f"{max_val} / {max_val} images processed - Complete!")
                 self.time_label.config(text="Done!")
 
-            elif message_type == "daminion_connected":
+                elif message_type == "daminion_connected":
                 status = data
                 self.daminion_status_label.config(
                     text=f"● Connected: {status['total_items']} items in catalog",
@@ -1004,6 +1241,51 @@ class ImageTaggerGUI(tk.Tk):
                 self.daminion_connect_button.config(state="normal")
                 self._update_step_states()
                 logging.info(f"Daminion connected: {status['total_items']} items")
+
+            elif message_type == "daminion_collections":
+                # populate combobox with names and keep full collection objects for selection
+                cols = data or []
+                # normalize to list of dicts
+                if isinstance(cols, dict):
+                    # if API wraps collection list in data/results
+                    vals = cols.get('items') or cols.get('collections') or list(cols.values())
+                    cols = vals or []
+
+                self.daminion_collections = cols
+                names = []
+                for c in cols:
+                    # try to choose a friendly label for combobox
+                    title = c.get('name') or c.get('title') or c.get('code') or str(c.get('id') or '')
+                    idx = c.get('id') or c.get('code') or c.get('collectionId') or ''
+                    names.append(f"{title} ({idx})" if idx else title)
+
+                self.daminion_collection_combo['values'] = names
+                if names:
+                    self.daminion_collection_combo.current(0)
+                # ensure refresh button is enabled
+                try:
+                    self.refresh_collections_btn.config(state='normal')
+                except Exception:
+                    pass
+
+    def refresh_daminion_collections(self):
+        """Start background refresh of shared collections and update the combobox."""
+        if not self.daminion_client:
+            messagebox.showerror("Error", "Not connected to Daminion. Please connect first.")
+            return
+
+        self.refresh_collections_btn.config(state='disabled')
+        self.status_label.config(text="Status: Refreshing Daminion collections...")
+        threading.Thread(target=self.refresh_daminion_collections_worker, daemon=True).start()
+
+    def refresh_daminion_collections_worker(self):
+        try:
+            cols = self.daminion_client.get_shared_collections(index=0, page_size=200)
+            self.q.put(("daminion_collections", cols))
+            self.q.put(("status_update", f"Found {len(cols)} shared collections on server."))
+        except Exception as e:
+            logging.exception("Failed to refresh collections")
+            self.q.put(("error", f"Failed to fetch collections: {e}"))
 
             elif message_type == "daminion_error":
                 self.daminion_status_label.config(text=f"● Connection failed", foreground="red")
