@@ -2,7 +2,13 @@
 Application configuration and constants.
 """
 
-from huggingface_hub import constants
+try:
+    from huggingface_hub import constants
+    HF_CACHE_DIR = constants.HUGGINGFACE_HUB_CACHE
+except Exception:
+    # Fallback when huggingface_hub isn't available (editor/CI environments)
+    import os
+    HF_CACHE_DIR = os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub")
 
 # --- Application ---
 APP_NAME = "Advanced Image Tagger"
@@ -10,7 +16,12 @@ GEOMETRY = "800x600"
 
 # --- Hugging Face ---
 # The default cache directory for Hugging Face models.
-HF_CACHE_DIR = constants.HUGGINGFACE_HUB_CACHE
+# HF_CACHE_DIR is set above when importing constants or to a sensible
+# fallback path if that import fails.
+
+# --- Model Search ---
+# Limit the number of models returned in search results to avoid UI overload.
+MODEL_SEARCH_LIMIT = 100
 
 # --- Model Tasks ---
 MODEL_TASK_IMAGE_CLASSIFICATION = "image-classification"

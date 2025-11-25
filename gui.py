@@ -29,6 +29,11 @@ class ImageTaggerGUI(tk.Tk):
 
         self.q = queue.Queue()
         self.model = None
+        # Download progress tracking
+        self._dl_start_time = None
+        self._dl_total_bytes = None
+        self._dl_last_bytes = 0
+        self._dl_last_time = None
         self.image_dir = None
         self.stop_event = threading.Event()
         self.config_manager = ConfigManager()
@@ -60,6 +65,27 @@ class ImageTaggerGUI(tk.Tk):
         report_menu.add_command(label="Export Report (JSON)", command=self.export_report_json)
         report_menu.add_command(label="View Report Summary", command=self.show_report_summary)
 
+    # Small reusable collapsible container to reduce UI overflow on small screens
+    class CollapsiblePane(ttk.Frame):
+        def __init__(self, parent, title="", *args, **kwargs):
+            super().__init__(parent)
+            self.title = title
+            header = ttk.Frame(self)
+            header.pack(fill="x")
+            self._btn = ttk.Button(header, text=f"▾ {self.title}", width=40, command=self._toggle)
+            self._btn.pack(side="left", anchor="w")
+            # content frame where callers can pack their widgets
+            self.content = ttk.Frame(self)
+            self.content.pack(fill="both", expand=True)
+
+        def _toggle(self):
+            if self.content.winfo_ismapped():
+                self.content.pack_forget()
+                self._btn.config(text=f"▸ {self.title}")
+            else:
+                self.content.pack(fill="both", expand=True)
+                self._btn.config(text=f"▾ {self.title}")
+
     def _create_widgets(self):
         # Main container with padding
         main_container = ttk.Frame(self, padding="10")
@@ -75,19 +101,24 @@ class ImageTaggerGUI(tk.Tk):
                                    font=("Arial", 10))
         subtitle_label.pack(pady=(0, 20))
 
-        # Step 1: Choose Source
-        self._create_step1_source(main_container)
+        # Collapsible panes for each step
+        self.step1_pane = self.CollapsiblePane(main_container, title="Step 1: Choose Image Source")
+        self.step1_pane.pack(fill="x", pady=(0, 10))
+        self._create_step1_source(self.step1_pane.content)
 
-        # Step 2: Select AI Model
-        self._create_step2_model(main_container)
+        self.step2_pane = self.CollapsiblePane(main_container, title="Step 2: Select AI Model")
+        self.step2_pane.pack(fill="x", pady=(0, 10))
+        self._create_step2_model(self.step2_pane.content)
 
-        # Step 3: Configure Tagging
-        self._create_step3_config(main_container)
+        self.step3_pane = self.CollapsiblePane(main_container, title="Step 3: Configure Tagging")
+        self.step3_pane.pack(fill="x", pady=(0, 10))
+        self._create_step3_config(self.step3_pane.content)
 
-        # Step 4: Process Images
-        self._create_step4_process(main_container)
+        self.step4_pane = self.CollapsiblePane(main_container, title="Step 4: Process Images")
+        self.step4_pane.pack(fill="x", pady=(0, 10))
+        self._create_step4_process(self.step4_pane.content)
 
-        # Progress Section
+        # Progress Section (not collapsible)
         self._create_progress_section(main_container)
 
     def _create_step1_source(self, parent):
@@ -259,6 +290,10 @@ class ImageTaggerGUI(tk.Tk):
         self.model_progress_bar = ttk.Progressbar(load_frame, orient="horizontal",
                                                  length=200, mode="determinate")
         self.model_progress_bar.pack(side="left", padx=(15, 0), fill="x", expand=True)
+
+        # Small status label showing MB, percent and ETA for downloads
+        self.model_progress_label = ttk.Label(load_frame, text="", foreground="gray", font=("Arial", 8))
+        self.model_progress_label.pack(side="left", padx=(10,0))
 
         # Status indicator for Step 2
         self.step2_status = ttk.Label(frame, text="", foreground="gray")
@@ -874,8 +909,49 @@ class ImageTaggerGUI(tk.Tk):
 
             elif message_type == "model_download_progress":
                 current, total = data
+                # Defensive defaults
+                total = total or 1
                 self.model_progress_bar["maximum"] = total
                 self.model_progress_bar["value"] = current
+
+                # Initialize download tracking on first progress message
+                now = time.time()
+                if not self._dl_start_time:
+                    self._dl_start_time = now
+                    self._dl_total_bytes = total
+                    self._dl_last_bytes = current
+                    self._dl_last_time = now
+
+                # Compute average bytes/sec and ETA
+                elapsed = max(0.001, now - self._dl_start_time)
+                bytes_per_sec = current / elapsed if elapsed > 0 else 0
+                remaining = max(0, total - current)
+                eta = int(remaining / bytes_per_sec) if bytes_per_sec > 0 else None
+
+                # Format human-friendly label
+                def _mb(b):
+                    return b / (1024 * 1024)
+
+                percent = (current / total) * 100 if total else 0
+                if eta is None:
+                    eta_text = ""
+                elif eta < 60:
+                    eta_text = f"ETA: ~{eta}s"
+                else:
+                    m = int(eta / 60)
+                    eta_text = f"ETA: ~{m}m"
+
+                self.model_progress_label.config(
+                    text=f"{_mb(current):.1f}/{_mb(total):.1f} MB ({percent:.1f}%) {eta_text}"
+                )
+
+                # Reset when finished
+                if current >= total:
+                    self._dl_start_time = None
+                    self._dl_total_bytes = None
+                    self._dl_last_bytes = 0
+                    self._dl_last_time = None
+                    # briefly keep the success text then clear progress bar later when model_loaded arrives
 
             elif message_type == "model_loaded":
                 self.model = data
@@ -886,6 +962,7 @@ class ImageTaggerGUI(tk.Tk):
                 self.status_label.config(text=f"Status: Model {model_name} loaded successfully!")
                 self.load_model_button.config(state="normal")
                 self.model_progress_bar["value"] = 0
+                self.model_progress_label.config(text="")
                 self._update_step_states()
 
             elif message_type == "error":

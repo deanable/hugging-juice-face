@@ -10,6 +10,7 @@ from requests.exceptions import HTTPError
 from transformers import pipeline
 from threading import RLock
 import config
+import json
 
 class TqdmToQueue(tqdm):
     """A custom tqdm class that sends progress updates to a queue."""
@@ -89,7 +90,8 @@ def get_downloaded_models(task):
     """Get a list of downloaded models for a given task."""
     logging.info(f"Searching for downloaded models with task: '{task}'")
     try:
-        models = list_models(filter=task, sort="downloads", direction=-1)
+        # Limit results to reduce network load and UI clutter
+        models = list_models(filter=task, sort="downloads", direction=-1, limit=config.MODEL_SEARCH_LIMIT)
         downloaded_models = []
         for model in models:
             if is_model_downloaded(model.modelId):
@@ -104,8 +106,9 @@ def find_models_worker(task, q):
     """Worker thread to fetch model list from Hugging Face Hub."""
     logging.info(f"Searching for models with task: '{task}'")
     try:
-        models = list_models(filter=task, sort="downloads", direction=-1)
-        model_ids = [model.modelId for model in models]
+        # Request the top N models by downloads to keep the UI responsive.
+        models = list_models(filter=task, sort="downloads", direction=-1, limit=config.MODEL_SEARCH_LIMIT)
+        model_ids = [model.modelId for model in models][:config.MODEL_SEARCH_LIMIT]
         downloaded_models = [model_id for model_id in model_ids if is_model_downloaded(model_id)]
         logging.info(f"Found {len(model_ids)} models.")
         q.put(("models_found", (model_ids, downloaded_models)))
@@ -161,6 +164,22 @@ def load_model_with_progress(model_id, task, q):
 
         q.put(("status_update", f"Initializing model {model_id}..."))
         logging.info(f"Initializing pipeline for {model_id}...")
+        # Basic compatibility check: ensure config.json has a model_type for transformers pipelines
+        try:
+            cfg_path = os.path.join(local_model_path, "config.json")
+            if os.path.exists(cfg_path):
+                with open(cfg_path, "r", encoding="utf-8") as cf:
+                    cfg = json.load(cf)
+                if "model_type" not in cfg:
+                    raise ValueError(
+                        f"Model {model_id} does not appear to be a standard transformers model (missing 'model_type' in {cfg_path})."
+                        " The model may require a custom loader (e.g., OpenCLIP/timm) and cannot be loaded with the default pipeline."
+                    )
+        except ValueError:
+            raise
+        except Exception:
+            # If we can't inspect the config for any reason, proceed to let pipeline raise a clear error.
+            pass
         model = pipeline(task, model=local_model_path)
         logging.info(f"Model pipeline loaded successfully for: {model_id}")
         q.put(("model_loaded", model))
@@ -168,3 +187,101 @@ def load_model_with_progress(model_id, task, q):
     except Exception as e:
         logging.exception(f"Failed to load model: {model_id}")
         q.put(("error", f"Failed to load model: {e}"))
+
+
+def find_models_by_task(task):
+    """Synchronous helper to find models for a given task.
+
+    Returns a tuple: (model_ids, downloaded_models)
+    """
+    logging.info(f"Searching for models (sync) with task: '{task}'")
+    try:
+        # Limit to the top N models to avoid overwhelming the UI and reduce network usage
+        models = list_models(filter=task, sort="downloads", direction=-1, limit=config.MODEL_SEARCH_LIMIT)
+        model_ids = [model.modelId for model in models][:config.MODEL_SEARCH_LIMIT]
+        downloaded_models = [mid for mid in model_ids if is_model_downloaded(mid)]
+        logging.info(f"Found {len(model_ids)} models (sync). {len(downloaded_models)} cached locally.")
+        return model_ids, downloaded_models
+    except Exception as e:
+        logging.exception("Failed to find models (sync).")
+        return [], []
+
+
+def get_model_info(model_id):
+    """Return the README (or a helpful message) for a model synchronously."""
+    logging.info(f"Fetching README (sync) for model: {model_id}")
+    try:
+        readme_path = hf_hub_download(repo_id=model_id, filename="README.md")
+        with open(readme_path, "r", encoding="utf-8") as f:
+            return f.read()
+    except Exception as e:
+        logging.warning(f"Could not retrieve README for {model_id}. Error: {e}")
+        return f"Could not retrieve README for {model_id}.\n\n{e}"
+
+
+def load_model(model_id, task, progress_queue=None):
+    """Synchronous model loader that mirrors the behavior of the worker version.
+
+    If `progress_queue` is provided, status updates will be posted to it using
+    the same message types the GUI expects.
+    Returns the initialized pipeline object.
+    """
+    logging.info(f"Starting synchronous model load for: {model_id}")
+    try:
+        q = progress_queue
+        if q:
+            q.put(("status_update", f"Downloading/initializing model {model_id}..."))
+
+        if not is_model_downloaded(model_id):
+            logging.info(f"Downloading model files for {model_id} (sync)...")
+            api = HfApi()
+            model_info = api.model_info(repo_id=model_id)
+            total_model_size = sum(sibling.size for sibling in model_info.siblings if sibling.size is not None)
+            if q:
+                q.put(("total_model_size", total_model_size))
+
+            TqdmToQueue.reset_overall_progress()
+            TqdmToQueue.set_overall_total_size(total_model_size)
+            if q:
+                TqdmToQueue._q = q
+                TqdmToQueue._update_type = "model_download_progress"
+
+            local_model_path = snapshot_download(
+                repo_id=model_id,
+                tqdm_class=TqdmToQueue,
+            )
+            logging.info(f"Model download complete for {model_id} (sync).")
+        else:
+            logging.info(f"Model {model_id} is already downloaded (sync).")
+            model_cache_dir = get_model_cache_dir(model_id)
+            snapshot_dir = os.path.join(model_cache_dir, 'snapshots')
+            latest_snapshot = os.listdir(snapshot_dir)[-1]
+            local_model_path = os.path.join(snapshot_dir, latest_snapshot)
+
+        if q:
+            q.put(("status_update", f"Initializing model {model_id}..."))
+        # Basic compatibility check: ensure config.json has a model_type for transformers pipelines
+        try:
+            cfg_path = os.path.join(local_model_path, "config.json")
+            if os.path.exists(cfg_path):
+                with open(cfg_path, "r", encoding="utf-8") as cf:
+                    cfg = json.load(cf)
+                if "model_type" not in cfg:
+                    raise ValueError(
+                        f"Model {model_id} does not appear to be a standard transformers model (missing 'model_type' in {cfg_path})."
+                        " The model may require a custom loader (e.g., OpenCLIP/timm) and cannot be loaded with the default pipeline."
+                    )
+        except ValueError:
+            raise
+        except Exception:
+            # If we can't inspect the config for any reason, proceed to let pipeline raise a clear error.
+            pass
+        model = pipeline(task, model=local_model_path)
+        logging.info(f"Model pipeline loaded successfully for: {model_id} (sync)")
+        return model
+
+    except Exception as e:
+        logging.exception(f"Failed to load model (sync): {model_id}")
+        if progress_queue:
+            progress_queue.put(("error", f"Failed to load model: {e}"))
+        raise
