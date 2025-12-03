@@ -7,6 +7,9 @@ import urllib.request
 import urllib.parse
 import urllib.error
 import json
+import atexit
+import weakref
+import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 import tempfile
@@ -15,10 +18,29 @@ class DaminionAPIError(Exception):
     """Custom exception for Daminion API errors."""
     pass
 
-class DaminionClient:
-    """Client for interacting with Daminion Server Web API."""
+class DaminionAuthenticationError(DaminionAPIError):
+    """Raised when authentication fails."""
+    pass
 
-    def __init__(self, base_url: str, username: str, password: str):
+class DaminionNetworkError(DaminionAPIError):
+    """Raised when network operations fail."""
+    pass
+
+class DaminionRateLimitError(DaminionAPIError):
+    """Raised when rate limit is exceeded."""
+    pass
+
+class DaminionClient:
+    """Client for interacting with Daminion Server Web API.
+
+    Supports context manager protocol for automatic cleanup:
+        with DaminionClient(url, user, pass) as client:
+            items = client.get_media_items()
+    """
+
+    _instances = weakref.WeakSet()
+
+    def __init__(self, base_url: str, username: str, password: str, rate_limit: float = 0.1):
         """
         Initialize Daminion client.
 
@@ -26,6 +48,7 @@ class DaminionClient:
             base_url: Base URL of Daminion server (e.g., https://interiors.daminion.net)
             username: Daminion username
             password: Daminion password
+            rate_limit: Minimum seconds between API calls (default: 0.1)
         """
         self.base_url = base_url.rstrip('/')
         self.username = username
@@ -34,6 +57,20 @@ class DaminionClient:
         self.authenticated = False
         self.temp_dir = Path(tempfile.gettempdir()) / "daminion_cache"
         self.temp_dir.mkdir(exist_ok=True)
+        self.rate_limit = rate_limit
+        self._last_request_time = 0.0
+
+        DaminionClient._instances.add(self)
+        atexit.register(self.cleanup_temp_files)
+
+    def __enter__(self):
+        """Enter context manager."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Exit context manager and cleanup resources."""
+        self.cleanup_temp_files()
+        return False
 
     def authenticate(self) -> bool:
         """
@@ -83,22 +120,31 @@ class DaminionClient:
         except urllib.error.HTTPError as e:
             error_msg = f"HTTP {e.code}: {e.reason}"
             logging.error(f"[DAMINION] [ERROR] Authentication failed: {error_msg}")
-            raise DaminionAPIError(f"Authentication failed: {error_msg}")
+            raise DaminionAuthenticationError(f"Authentication failed: {error_msg}")
         except urllib.error.URLError as e:
             logging.error(f"[DAMINION] [ERROR] Network error during authentication: {e}")
-            raise DaminionAPIError(f"Network error: {e}")
+            raise DaminionNetworkError(f"Network error: {e}")
         except Exception as e:
             logging.exception(f"[DAMINION] [ERROR] Unexpected authentication error")
-            raise DaminionAPIError(f"Authentication error: {e}")
+            raise DaminionAuthenticationError(f"Authentication error: {e}")
 
     def _get_cookie_header(self) -> str:
         """Generate cookie header string from stored cookies."""
         return "; ".join([f"{k}={v}" for k, v in self.cookies.items()])
 
+    def _rate_limit(self):
+        """Enforce rate limiting between API calls."""
+        if self.rate_limit > 0:
+            elapsed = time.time() - self._last_request_time
+            if elapsed < self.rate_limit:
+                sleep_time = self.rate_limit - elapsed
+                time.sleep(sleep_time)
+        self._last_request_time = time.time()
+
     def _make_request(self, endpoint: str, method: str = 'GET',
                      data: Optional[Dict] = None, timeout: int = 30) -> Dict:
         """
-        Make authenticated API request.
+        Make authenticated API request with rate limiting.
 
         Args:
             endpoint: API endpoint (e.g., '/api/MediaItems/Get')
@@ -110,10 +156,14 @@ class DaminionClient:
             Response data as dictionary
 
         Raises:
+            DaminionAuthenticationError: If not authenticated
+            DaminionNetworkError: If network error occurs
             DaminionAPIError: If request fails
         """
         if not self.authenticated:
-            raise DaminionAPIError("Not authenticated. Call authenticate() first.")
+            raise DaminionAuthenticationError("Not authenticated. Call authenticate() first.")
+
+        self._rate_limit()
 
         url = f"{self.base_url}{endpoint}"
         logging.debug(f"[DAMINION] API Request: {method} {endpoint}")
@@ -142,14 +192,20 @@ class DaminionClient:
             error_msg = f"HTTP {e.code}: {e.reason} - {error_body}"
             logging.error(f"[DAMINION] [ERROR] API request failed: {error_msg}")
             logging.error(f"[DAMINION] Failed endpoint: {method} {endpoint}")
+            if e.code == 429:
+                raise DaminionRateLimitError(f"Rate limit exceeded: {error_msg}")
+            elif e.code in (401, 403):
+                raise DaminionAuthenticationError(f"Authentication error: {error_msg}")
             raise DaminionAPIError(error_msg)
         except urllib.error.URLError as e:
             logging.error(f"[DAMINION] [ERROR] Network error: {e}")
             logging.error(f"[DAMINION] Failed endpoint: {method} {endpoint}")
-            raise DaminionAPIError(f"Network error: {e}")
+            raise DaminionNetworkError(f"Network error: {e}")
         except json.JSONDecodeError as e:
             logging.error(f"[DAMINION] [ERROR] Invalid JSON response: {e}")
             raise DaminionAPIError(f"Invalid JSON response: {e}")
+        except (DaminionAPIError, DaminionAuthenticationError, DaminionNetworkError, DaminionRateLimitError):
+            raise
         except Exception as e:
             logging.exception(f"[DAMINION] [ERROR] Unexpected API request error: {url}")
             raise DaminionAPIError(f"Request error: {e}")
@@ -394,44 +450,57 @@ class DaminionClient:
             logging.error(f"[DAMINION] [ERROR] Failed to download thumbnail for {item_id}: {e}")
             return None
 
-    def batch_update_tags(self, item_ids: List[str], tags: Dict[str, List[str]]) -> bool:
+    def batch_update_tags(self, item_ids: List[str], tags: Dict[str, List[str]], batch_size: int = 50) -> bool:
         """
-        Update tags for multiple media items.
+        Update tags for multiple media items with automatic batching.
 
         Args:
             item_ids: List of media item IDs
             tags: Dictionary mapping tag field names to lists of values
                   Example: {"Keywords": ["sunset", "beach"], "Category": ["Scenery"]}
+            batch_size: Number of items to update per batch (default: 50)
 
         Returns:
-            True if update successful, False otherwise
+            True if all updates successful, False otherwise
 
         Note:
-            Exact request format may need adjustment based on API requirements.
+            Processes items in batches to avoid overwhelming the API.
         """
+        if not item_ids:
+            return True
+
         endpoint = "/api/ItemData/BatchChange"
+        all_successful = True
 
-        # Construct request body - format may need adjustment
-        data = {
-            "mediaItemIds": item_ids,
-            "tags": tags
-        }
+        # Process in batches
+        for i in range(0, len(item_ids), batch_size):
+            batch = item_ids[i:i + batch_size]
+            logging.debug(f"[DAMINION] Batch updating items {i+1} to {i+len(batch)}")
 
-        try:
-            response = self._make_request(endpoint, method='POST', data=data)
-            success = response.get('success', False)
+            data = {
+                "mediaItemIds": batch,
+                "tags": tags
+            }
 
-            if success:
-                logging.info(f"Successfully updated tags for {len(item_ids)} items")
-            else:
-                error = response.get('error', 'Unknown error')
-                logging.error(f"Tag update failed: {error}")
+            try:
+                response = self._make_request(endpoint, method='POST', data=data)
+                success = response.get('success', False)
 
-            return success
+                if success:
+                    logging.debug(f"[DAMINION] Successfully updated tags for batch of {len(batch)} items")
+                else:
+                    error = response.get('error', 'Unknown error')
+                    logging.error(f"[DAMINION] Tag update failed for batch: {error}")
+                    all_successful = False
 
-        except Exception as e:
-            logging.error(f"Batch update failed: {e}")
-            return False
+            except (DaminionAPIError, DaminionNetworkError) as e:
+                logging.error(f"[DAMINION] Batch update failed: {e}")
+                all_successful = False
+
+        if all_successful:
+            logging.info(f"[DAMINION] Successfully updated tags for all {len(item_ids)} items")
+
+        return all_successful
 
     def update_item_metadata(self, item_id: str, category: Optional[str] = None,
                            keywords: Optional[List[str]] = None) -> bool:
@@ -471,11 +540,31 @@ class DaminionClient:
     def cleanup_temp_files(self):
         """Remove all cached thumbnail files."""
         try:
-            for file in self.temp_dir.glob("*.jpg"):
-                file.unlink()
-            logging.info("Cleaned up temporary thumbnail files")
+            if self.temp_dir.exists():
+                for file in self.temp_dir.glob("*.jpg"):
+                    try:
+                        file.unlink()
+                    except OSError as e:
+                        logging.warning(f"Failed to delete {file}: {e}")
+                logging.debug("Cleaned up temporary thumbnail files")
         except Exception as e:
             logging.error(f"Failed to cleanup temp files: {e}")
+
+    def __del__(self):
+        """Cleanup on deletion."""
+        try:
+            self.cleanup_temp_files()
+        except Exception:
+            pass
+
+    @classmethod
+    def cleanup_all(cls):
+        """Clean up all active client instances."""
+        for client in list(cls._instances):
+            try:
+                client.cleanup_temp_files()
+            except Exception:
+                pass
 
     def test_connection(self) -> Dict[str, any]:
         """

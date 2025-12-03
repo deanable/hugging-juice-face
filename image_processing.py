@@ -143,9 +143,12 @@ def write_metadata(image_path: Path, category: str, keywords: List[str], q: Queu
         if keywords:
             existing_keywords = [k.decode('utf-8') if isinstance(k, bytes) else k
                                for k in info['keywords']]
+            # Use set for O(1) lookups instead of O(n)
+            existing_set = set(existing_keywords)
             for k in keywords:
-                if k not in existing_keywords:
+                if k not in existing_set:
                     existing_keywords.append(k)
+                    existing_set.add(k)
             info['keywords'] = existing_keywords
 
         info.save()
@@ -168,9 +171,12 @@ def write_metadata(image_path: Path, category: str, keywords: List[str], q: Queu
             existing_keywords_str = existing_keywords_bytes.decode('utf-16le').rstrip('\x00') if existing_keywords_bytes else ''
             existing_keywords = existing_keywords_str.split(';') if existing_keywords_str else []
 
+            # Use set for O(1) lookups instead of O(n)
+            existing_set = set(existing_keywords)
             for k in keywords:
-                if k not in existing_keywords:
+                if k not in existing_set:
                     existing_keywords.append(k)
+                    existing_set.add(k)
 
             exif_dict['0th'][piexif.ImageIFD.XPKeywords] = ";".join(existing_keywords).encode('utf-16le')
 

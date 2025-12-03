@@ -4,7 +4,7 @@ Main entry point for the Advanced Image Tagger application.
 
 import logging
 import sys
-from gui import ImageTaggerGUI
+from gui_main import ImageTaggerGUI
 from logging_config import setup_logging
 
 if __name__ == "__main__":
