@@ -19,6 +19,7 @@ from daminion_client import DaminionClient
 from report_generator import ProcessingReport
 
 # Import modular components
+from typing import Optional, List, Dict
 import gui_steps
 import gui_workers
 import gui_handlers
@@ -43,10 +44,36 @@ class ImageTaggerGUI(tk.Tk):
         self.stop_event = threading.Event()
         self.config_manager = ConfigManager()
         self.progress_tracker = ProgressTracker()
-        self.daminion_client = None
+        self.daminion_client: Optional[DaminionClient] = None
         self.processing_mode = "local"
         self.report = ProcessingReport()
         self.processing_start_time = None
+
+        # Initialize attributes for Pylance
+        self.daminion_url_entry: Optional[ttk.Entry] = None
+        self.daminion_username_entry: Optional[ttk.Entry] = None
+        self.daminion_password_entry: Optional[ttk.Entry] = None
+        self.daminion_status_label: Optional[ttk.Label] = None
+        self.daminion_connect_button: Optional[ttk.Button] = None
+        self.find_models_button: Optional[ttk.Button] = None
+        self.status_label: Optional[ttk.Label] = None
+        self.model_listbox: Optional[tk.Listbox] = None
+        self.load_model_button: Optional[ttk.Button] = None
+        self.model_task: Optional[tk.StringVar] = None
+        self.categories_entry: Optional[ttk.Entry] = None
+        self.keywords_entry: Optional[ttk.Entry] = None
+        self.scope_var: Optional[tk.StringVar] = None
+        self.collection_path: Optional[tk.StringVar] = None
+        self.start_button: Optional[ttk.Button] = None
+        self.progress_bar: Optional[ttk.Progressbar] = None
+        self.progress_label: Optional[ttk.Label] = None
+        self.time_label: Optional[ttk.Label] = None
+        self.daminion_collection_combo: Optional[ttk.Combobox] = None
+        self.refresh_collections_btn: Optional[ttk.Button] = None
+        self.model_info_text: Optional[tk.Text] = None
+        self.model_progress_bar: Optional[ttk.Progressbar] = None
+        self.model_progress_label: Optional[ttk.Label] = None
+        self.daminion_collections: List[Dict] = []
 
         self._create_widgets()
         self._create_menu()
@@ -144,6 +171,12 @@ class ImageTaggerGUI(tk.Tk):
     # Worker thread launchers
     def connect_daminion(self):
         """Connect to Daminion server."""
+        assert self.daminion_url_entry is not None
+        assert self.daminion_username_entry is not None
+        assert self.daminion_password_entry is not None
+        assert self.daminion_status_label is not None
+        assert self.daminion_connect_button is not None
+
         url = self.daminion_url_entry.get().strip()
         username = self.daminion_username_entry.get().strip()
         password = self.daminion_password_entry.get()
@@ -162,6 +195,8 @@ class ImageTaggerGUI(tk.Tk):
 
     def find_models(self):
         """Search for models on Hugging Face."""
+        assert self.find_models_button is not None
+        assert self.status_label is not None
         self.find_models_button.config(state="disabled")
         self.status_label.config(text="Status: Searching for models on Hugging Face...")
         logging.info("User initiated model search.")
@@ -173,6 +208,9 @@ class ImageTaggerGUI(tk.Tk):
 
     def load_model(self):
         """Load selected model."""
+        assert self.model_listbox is not None
+        assert self.load_model_button is not None
+        assert self.status_label is not None
         selection = self.model_listbox.curselection()
         if not selection:
             messagebox.showerror("Error", "Please select a model from the list.")
@@ -196,34 +234,52 @@ class ImageTaggerGUI(tk.Tk):
         else:
             self.start_local_processing()
 
-    def start_local_processing(self):
-        """Start processing local files."""
-        if not self.image_dir:
-            messagebox.showerror("Error", "Please select an image directory first.")
-            return
-
+    def _get_processing_config(self):
+        """Get and validate the processing configuration from the UI."""
+        assert self.model_task is not None
+        assert self.categories_entry is not None
+        assert self.keywords_entry is not None
         task = self.model_task.get()
         cats_str = self.categories_entry.get().strip()
         keywords_str = self.keywords_entry.get().strip()
 
         if not cats_str and task == config.MODEL_TASK_IMAGE_CLASSIFICATION:
             messagebox.showerror("Error", "Categories are required for image classification.")
-            return
+            return None
 
         if not keywords_str and task == config.MODEL_TASK_ZERO_SHOT:
             messagebox.showerror("Error", "Keywords are required for zero-shot classification.")
-            return
+            return None
 
         categories = [c.strip() for c in cats_str.split(",") if c.strip()]
         keywords = [k.strip() for k in keywords_str.split(",") if k.strip()]
 
         if not categories and task == config.MODEL_TASK_IMAGE_CLASSIFICATION:
             messagebox.showerror("Error", "At least one valid category is required.")
-            return
+            return None
 
         if not keywords and task == config.MODEL_TASK_ZERO_SHOT:
             messagebox.showerror("Error", "At least one valid keyword is required.")
+            return None
+
+        return task, categories, keywords
+
+    def start_local_processing(self):
+        """Start processing local files."""
+        assert self.start_button is not None
+        assert self.progress_bar is not None
+        assert self.progress_label is not None
+        assert self.time_label is not None
+        assert self.scope_var is not None
+        
+        if not self.image_dir:
+            messagebox.showerror("Error", "Please select an image directory first.")
             return
+
+        processing_config = self._get_processing_config()
+        if not processing_config:
+            return
+        task, categories, keywords = processing_config
 
         # Use efficient scanning
         all_image_files = gui_handlers.scan_image_directory(self.image_dir)
@@ -276,32 +332,18 @@ class ImageTaggerGUI(tk.Tk):
 
     def start_daminion_processing(self):
         """Start processing Daminion items."""
+        assert self.scope_var is not None
+        assert self.daminion_collection_combo is not None
+        assert self.start_button is not None
         if not self.daminion_client:
             messagebox.showerror("Error", "Not connected to Daminion. Please connect first.")
             return
+        assert self.daminion_client is not None
 
-        task = self.model_task.get()
-        cats_str = self.categories_entry.get().strip()
-        keywords_str = self.keywords_entry.get().strip()
-
-        if not cats_str and task == config.MODEL_TASK_IMAGE_CLASSIFICATION:
-            messagebox.showerror("Error", "Categories are required for image classification.")
+        processing_config = self._get_processing_config()
+        if not processing_config:
             return
-
-        if not keywords_str and task == config.MODEL_TASK_ZERO_SHOT:
-            messagebox.showerror("Error", "Keywords are required for zero-shot classification.")
-            return
-
-        categories = [c.strip() for c in cats_str.split(",") if c.strip()]
-        keywords = [k.strip() for k in keywords_str.split(",") if k.strip()]
-
-        if not categories and task == config.MODEL_TASK_IMAGE_CLASSIFICATION:
-            messagebox.showerror("Error", "At least one valid category is required.")
-            return
-
-        if not keywords and task == config.MODEL_TASK_ZERO_SHOT:
-            messagebox.showerror("Error", "At least one valid keyword is required.")
-            return
+        task, categories, keywords = processing_config
 
         scope = getattr(self, 'scope_var', None) and self.scope_var.get() or 'untagged'
         items_to_process = None
@@ -368,9 +410,12 @@ class ImageTaggerGUI(tk.Tk):
 
     def refresh_daminion_collections(self):
         """Start background refresh of shared collections."""
+        assert self.refresh_collections_btn is not None
+        assert self.status_label is not None
         if not self.daminion_client:
             messagebox.showerror("Error", "Not connected to Daminion. Please connect first.")
             return
+        assert self.daminion_client is not None
 
         self.refresh_collections_btn.config(state='disabled')
         self.status_label.config(text="Status: Refreshing Daminion collections...")
@@ -383,6 +428,9 @@ class ImageTaggerGUI(tk.Tk):
             logging.debug(f"GUI received queue message: {message_type}")
 
             if message_type == "models_found":
+                assert self.model_listbox is not None
+                assert self.status_label is not None
+                assert self.find_models_button is not None
                 self.model_listbox.delete(0, tk.END)
                 model_ids, downloaded_models = data
                 for model_id in model_ids:
@@ -396,11 +444,15 @@ class ImageTaggerGUI(tk.Tk):
                 self._update_step_states()
 
             elif message_type == "model_info_found":
+                assert self.model_info_text is not None
+                assert self.status_label is not None
                 self.model_info_text.delete("1.0", tk.END)
                 self.model_info_text.insert("1.0", data)
                 self.status_label.config(text="Status: Model info loaded.")
 
             elif message_type == "model_download_progress":
+                assert self.model_progress_bar is not None
+                assert self.model_progress_label is not None
                 current, total = data
                 total = total or 1
                 self.model_progress_bar["maximum"] = total
@@ -441,6 +493,11 @@ class ImageTaggerGUI(tk.Tk):
                     self._dl_last_time = None
 
             elif message_type == "model_loaded":
+                assert self.model_task is not None
+                assert self.status_label is not None
+                assert self.load_model_button is not None
+                assert self.model_progress_bar is not None
+                assert self.model_progress_label is not None
                 self.model = data
                 model_name = self.model.model.name_or_path
                 self.config_manager.set('last_model_id', model_name)
@@ -453,19 +510,28 @@ class ImageTaggerGUI(tk.Tk):
                 self._update_step_states()
 
             elif message_type == "error":
+                assert self.status_label is not None
+                assert self.load_model_button is not None
+                assert self.find_models_button is not None
                 self.status_label.config(text=f"Status: Error - {data}")
                 self.load_model_button.config(state="normal")
                 self.find_models_button.config(state="normal")
 
             elif message_type == "status_update":
+                assert self.status_label is not None
                 self.status_label.config(text=f"Status: {data}")
 
             elif message_type == "progress_max":
+                assert self.progress_bar is not None
+                assert self.progress_label is not None
                 self.progress_bar["maximum"] = data
                 self.progress_bar["value"] = 0
                 self.progress_label.config(text=f"0 / {data} images processed")
 
             elif message_type == "progress":
+                assert self.progress_bar is not None
+                assert self.progress_label is not None
+                assert self.time_label is not None
                 self.progress_bar["value"] = data
                 max_val = self.progress_bar["maximum"]
                 self.progress_label.config(text=f"{data} / {int(max_val)} images processed")
@@ -474,6 +540,11 @@ class ImageTaggerGUI(tk.Tk):
                 self.time_label.config(text=time_remaining)
 
             elif message_type == "progress_done":
+                assert self.status_label is not None
+                assert self.start_button is not None
+                assert self.progress_bar is not None
+                assert self.progress_label is not None
+                assert self.time_label is not None
                 self.report.end_session()
                 self.status_label.config(text=f"Status: {data}")
                 self.start_button.config(state="normal")
@@ -483,6 +554,8 @@ class ImageTaggerGUI(tk.Tk):
                 self.time_label.config(text="Done!")
 
             elif message_type == "daminion_connected":
+                assert self.daminion_status_label is not None
+                assert self.daminion_connect_button is not None
                 status = data
                 self.daminion_status_label.config(
                     text=f"● Connected: {status['total_items']} items in catalog",
@@ -493,12 +566,16 @@ class ImageTaggerGUI(tk.Tk):
                 logging.info(f"Daminion connected: {status['total_items']} items")
 
             elif message_type == "daminion_error":
+                assert self.daminion_status_label is not None
+                assert self.daminion_connect_button is not None
                 self.daminion_status_label.config(text=f"● Connection failed", foreground="red")
                 self.daminion_connect_button.config(state="normal")
                 messagebox.showerror("Daminion Connection Error", f"Failed to connect to Daminion:\n\n{data}")
                 self._update_step_states()
 
             elif message_type == "daminion_collections":
+                assert self.daminion_collection_combo is not None
+                assert self.refresh_collections_btn is not None
                 cols = data or []
                 if isinstance(cols, dict):
                     vals = cols.get('items') or cols.get('collections') or list(cols.values())
