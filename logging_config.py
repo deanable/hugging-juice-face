@@ -12,13 +12,15 @@ def setup_logging():
 
     file_handler = RotatingFileHandler(
         log_filename,
-        maxBytes=10 * 1024 * 1024,
-        backupCount=5
+        maxBytes=10 * 1024 * 1024,  # 10 MB
+        backupCount=5,
+        encoding='utf-8'  # Explicitly set encoding to UTF-8
     )
     file_handler.setLevel(logging.INFO)
     file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
 
-    console_handler = logging.StreamHandler()
+    # Explicitly set encoding for console handler to prevent UnicodeEncodeError on Windows
+    console_handler = logging.StreamHandler() 
     console_handler.setLevel(logging.INFO)
     console_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
 

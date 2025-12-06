@@ -142,7 +142,7 @@ def write_metadata(image_path: Path, category: str, keywords: List[str], q: Queu
 
         if keywords:
             existing_keywords = [k.decode('utf-8') if isinstance(k, bytes) else k
-                               for k in info['keywords']]
+                               for k in (info['keywords'] or [])]
             # Use set for O(1) lookups instead of O(n)
             existing_set = set(existing_keywords)
             for k in keywords:
@@ -267,15 +267,15 @@ def process_single_image(
             logging.info(f"Found keywords: {new_keywords} for {image_path.name}")
 
         elif model_task == config.MODEL_TASK_IMAGE_TO_TEXT:
-            result = model(image)
+            # For VL models, providing a prompt is often necessary.
+            prompt = "<|user|>\nDescribe the image.<|end|>\n<|assistant|>\n"
+            result = model([{"image": image, "prompt": prompt}], generate_kwargs={"max_new_tokens": 200})
             if result and len(result) > 0:
-                generated_text = result[0].get('generated_text', '')
-                words = generated_text.lower().split()
+                generated_text = result[0][0].get('generated_text', '')
+                # Keywords are often comma-separated
                 new_keywords = [
-                    word for word in words
-                    if word.isalpha()
-                    and len(word) > 3
-                    and word not in config.STOP_WORDS
+                    w.strip() for w in generated_text.split(',')
+                    if len(w.strip()) > 2 and w.strip().lower() not in config.STOP_WORDS
                 ][:config.MAX_KEYWORDS_PER_IMAGE]
                 logging.info(f"Found keywords from generated text: {new_keywords} for {image_path.name}")
 

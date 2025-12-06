@@ -2,6 +2,7 @@
 
 import logging
 import os
+from pathlib import Path
 from functools import partial
 from tqdm import tqdm
 from huggingface_hub import list_models, hf_hub_download, snapshot_download, HfApi
@@ -68,14 +69,15 @@ def is_model_downloaded(model_id):
             return False
         latest_snapshot = snapshots[-1]
         
-        for file_info in model_info.siblings:
-            if file_info.rfilename.endswith(config.MODEL_FILE_EXCLUSIONS):
-                continue
-            file_path = os.path.join(snapshot_dir, latest_snapshot, file_info.rfilename)
-            if not os.path.exists(file_path):
-                logging.info(f"Model {model_id} is not fully downloaded. Missing file: {file_info.rfilename}")
-                return False
-        return True
+        if model_info.siblings:
+            for file_info in model_info.siblings:
+                if file_info.rfilename.endswith(config.MODEL_FILE_EXCLUSIONS):
+                    continue
+                file_path = os.path.join(snapshot_dir, latest_snapshot, file_info.rfilename)
+                if not os.path.exists(file_path):
+                    logging.info(f"Model {model_id} is not fully downloaded. Missing file: {file_info.rfilename}")
+                    return False
+            return True
     except HTTPError as e:
         if e.response.status_code == 404:
             logging.warning(f"Model not found on Hub: {model_id}")
@@ -93,9 +95,9 @@ def get_downloaded_models(task):
         # Limit results to reduce network load and UI clutter
         models = list_models(filter=task, sort="downloads", direction=-1, limit=config.MODEL_SEARCH_LIMIT)
         downloaded_models = []
-        for model in models:
-            if is_model_downloaded(model.modelId):
-                downloaded_models.append(model.modelId)
+        for model in models or []:
+            if is_model_downloaded(model.id):
+                downloaded_models.append(model.id)
         logging.info(f"Found {len(downloaded_models)} downloaded models.")
         return downloaded_models
     except Exception as e:
@@ -108,13 +110,59 @@ def find_models_worker(task, q):
     try:
         # Request the top N models by downloads to keep the UI responsive.
         models = list_models(filter=task, sort="downloads", direction=-1, limit=config.MODEL_SEARCH_LIMIT)
-        model_ids = [model.modelId for model in models][:config.MODEL_SEARCH_LIMIT]
+        model_ids = [model.id for model in models or []][:config.MODEL_SEARCH_LIMIT]
         downloaded_models = [model_id for model_id in model_ids if is_model_downloaded(model_id)]
         logging.info(f"Found {len(model_ids)} models.")
         q.put(("models_found", (model_ids, downloaded_models)))
     except Exception as e:
         logging.exception("Failed to find models.")
         q.put(("error", f"Failed to find models: {e}"))
+
+def find_local_models_by_task(task: str) -> list[str]:
+    """
+    Finds locally cached models compatible with a given task by scanning the cache.
+
+    Args:
+        task: The pipeline task to filter by (e.g., 'image-classification').
+
+    Returns:
+        A list of model IDs that are cached locally and support the task.
+    """
+    local_models = []
+    cache_path = Path(HUGGINGFACE_HUB_CACHE)
+    if not cache_path.exists():
+        logging.warning("Hugging Face cache directory not found.")
+        return []
+
+    logging.info(f"Scanning cache for local models for task: {task}")
+    for model_dir in cache_path.glob("models--*"):
+        if not model_dir.is_dir():
+            continue
+
+        model_id = model_dir.name[len("models--"):].replace("--", "/")
+        try:
+            # Check for a config.json in the latest snapshot
+            snapshot_dirs = [d for d in (model_dir / "snapshots").iterdir() if d.is_dir()]
+            if not snapshot_dirs:
+                continue
+
+            latest_snapshot = max(snapshot_dirs, key=lambda p: p.stat().st_mtime)
+            config_path = latest_snapshot / "config.json"
+
+            if config_path.exists():
+                with open(config_path, "r", encoding="utf-8") as f:
+                    model_config = json.load(f)
+                
+                # Check if the model supports the task via its pipeline_tag or architectures
+                if model_config.get("pipeline_tag") == task:
+                    local_models.append(model_id)
+        except Exception as e:
+            logging.debug(f"Could not inspect model {model_id}: {e}")
+            continue
+    
+    logging.info(f"Found {len(local_models)} local models for task '{task}'.")
+    return local_models
+
 
 def show_model_info_worker(model_id, q):
     """Worker thread to download a model's README file."""
@@ -140,7 +188,8 @@ def load_model_with_progress(model_id, task, q):
             # Get model info to calculate total size
             api = HfApi()
             model_info = api.model_info(repo_id=model_id)
-            total_model_size = sum(sibling.size for sibling in model_info.siblings if sibling.size is not None)
+            total_model_size = sum(sibling.size for sibling in (model_info.siblings or []) if sibling.size is not None)
+
             q.put(("total_model_size", total_model_size))
             logging.info(f"Total model size for {model_id}: {total_model_size} bytes.")
             
@@ -151,7 +200,7 @@ def load_model_with_progress(model_id, task, q):
 
             local_model_path = snapshot_download(
                 repo_id=model_id,
-                tqdm_class=TqdmToQueue,
+                tqdm_class=TqdmToQueue, # type: ignore
             )
             logging.info(f"Model download complete for {model_id}.")
         else:
@@ -198,7 +247,7 @@ def find_models_by_task(task):
     try:
         # Limit to the top N models to avoid overwhelming the UI and reduce network usage
         models = list_models(filter=task, sort="downloads", direction=-1, limit=config.MODEL_SEARCH_LIMIT)
-        model_ids = [model.modelId for model in models][:config.MODEL_SEARCH_LIMIT]
+        model_ids = [model.id for model in models or []][:config.MODEL_SEARCH_LIMIT]
         downloaded_models = [mid for mid in model_ids if is_model_downloaded(mid)]
         logging.info(f"Found {len(model_ids)} models (sync). {len(downloaded_models)} cached locally.")
         return model_ids, downloaded_models
@@ -236,7 +285,7 @@ def load_model(model_id, task, progress_queue=None):
             logging.info(f"Downloading model files for {model_id} (sync)...")
             api = HfApi()
             model_info = api.model_info(repo_id=model_id)
-            total_model_size = sum(sibling.size for sibling in model_info.siblings if sibling.size is not None)
+            total_model_size = sum(sibling.size for sibling in (model_info.siblings or []) if sibling.size is not None)
             if q:
                 q.put(("total_model_size", total_model_size))
 
@@ -248,7 +297,7 @@ def load_model(model_id, task, progress_queue=None):
 
             local_model_path = snapshot_download(
                 repo_id=model_id,
-                tqdm_class=TqdmToQueue,
+                tqdm_class=TqdmToQueue, # type: ignore
             )
             logging.info(f"Model download complete for {model_id} (sync).")
         else:

@@ -11,7 +11,7 @@ import atexit
 import weakref
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 import tempfile
 
 class DaminionAPIError(Exception):
@@ -59,6 +59,8 @@ class DaminionClient:
         self.temp_dir.mkdir(exist_ok=True)
         self.rate_limit = rate_limit
         self._last_request_time = 0.0
+        self._search_endpoint_unavailable = False
+        self._structured_query_unavailable = False
 
         DaminionClient._instances.add(self)
         atexit.register(self.cleanup_temp_files)
@@ -368,12 +370,95 @@ class DaminionClient:
         logging.warning(f"Could not retrieve items for shared collection {collection_id}")
         return []
 
+    def get_items_by_query(self, query: str, operators: str, index: int = 0, page_size: int = 500) -> Optional[List[Dict]]:
+        """
+        Search for items using a structured query string, common in some Daminion API versions.
+
+        Args:
+            query: The query string (e.g., '42,2,3' for Flag=Flagged or Rejected).
+            operators: The operators for the query (e.g., '42,any').
+            index: The starting index for pagination.
+            page_size: The number of items to return per page.
+
+        Returns:
+            A list of media items, or None if the endpoint is not supported.
+        """
+        if self._structured_query_unavailable:
+            logging.warning("[DAMINION] Structured query endpoint is unavailable.")
+            return None
+
+        logging.info(f"[DAMINION] Searching items with structured query: '{query}'")
+        endpoint = f"/api/MediaItems/GetByQuery?query={query}&operators={operators}&start={index}&length={page_size}"
+
+        try:
+            response = self._make_request(endpoint, method='GET')
+            items = response.get('mediaItems', [])
+            logging.info(f"[DAMINION] [OK] Structured query returned {len(items)} items")
+            return items
+        except DaminionAPIError as e:
+            if "404" in str(e):
+                logging.warning("[DAMINION] Structured query endpoint '/api/MediaItems/GetByQuery' not found (404).")
+                self._structured_query_unavailable = True
+                return None
+            raise
+
+
+    def search_items(self, query: str, index: int = 0, page_size: int = 200) -> Optional[List[Dict]]:
+        """
+        Search for items on the server using a query string.
+        Falls back to client-side filtering if the search endpoint is not available.
+
+        Args:
+            query: The search query (e.g., 'status:untagged', 'flag:rejected').
+            index: The starting index for pagination.
+            page_size: The number of items to return per page.
+
+        Returns:
+            A list of media items matching the search query, or None if fallback is needed.
+        """
+        if self._search_endpoint_unavailable:
+            logging.warning("[DAMINION] Search endpoint is unavailable, cannot perform server-side search.")
+            return None
+
+        logging.info(f"[DAMINION] Searching items with query: '{query}'")
+        endpoint = "/api/MediaItems/Search"
+        data = {
+            "search": query,
+            "start": index,
+            "length": page_size
+        }
+        try:
+            response = self._make_request(endpoint, method='POST', data=data)
+            items = response.get('mediaItems', [])
+            logging.info(f"[DAMINION] [OK] Server-side search returned {len(items)} items")
+            return items
+        except DaminionAPIError as e:
+            if "404" in str(e):
+                logging.warning("[DAMINION] Search endpoint not found (404). Falling back to client-side filtering.")
+                self._search_endpoint_unavailable = True
+                return None
+            raise
+
+
     def get_flagged_items(self, batch_size: int = 200, max_items: Optional[int] = None) -> List[Dict]:
         """Return items that appear to be flagged or rejected.
 
         This is implemented client-side using heuristics (filename / metadata checks)
         because not all Daminion servers provide a dedicated 'flagged' endpoint.
         """
+        # Try structured query first (based on user feedback for older servers)
+        # query=42,2,3 means property 42 (Flag) has a value of 2 (Flagged) OR 3 (Rejected)
+        flagged_items = self.get_items_by_query(query="42,2,3", operators="42,any", page_size=max_items or 500)
+        if flagged_items is not None:
+            return flagged_items
+
+        # Try text-based search next
+        flagged_items = self.search_items(query="flag:rejected OR flag:approved", page_size=max_items or 500)
+        if flagged_items is not None:
+            return flagged_items
+
+        # Fallback to client-side filtering
+        logging.warning("[DAMINION] Falling back to client-side filtering for flagged items.")
         items = self.get_all_items_paginated(batch_size=batch_size, max_items=max_items)
 
         def is_flagged_item(it: Dict) -> bool:
@@ -401,13 +486,24 @@ class DaminionClient:
             This endpoint returns items missing required metadata.
             May return empty if all items are properly tagged.
         """
+        # Try structured query first (assuming 'status:untagged' corresponds to a specific property)
+        # This is a guess; the exact property ID for "Status" might differ.
+        # Let's try with the text search first as it's more standard.
+
+        # Try efficient text-based server-side search first
+        items = self.search_items(query="status:untagged", page_size=500)
+        if items is not None:
+            total = len(items)
+            logging.info(f"Retrieved {len(items)} untagged items via server-side search.")
+            return items, total
+
+        # Fallback to legacy endpoint
+        logging.warning("[DAMINION] Falling back to legacy '/api/MediaItems/MyItems' for untagged items.")
         endpoint = "/api/MediaItems/MyItems"
         response = self._make_request(endpoint)
-
         items = response.get('mediaItems', [])
         total = response.get('totalCount', 0)
-
-        logging.info(f"Retrieved {len(items)} untagged items")
+        logging.info(f"Retrieved {len(items)} untagged items from legacy endpoint.")
         return items, total
 
     def download_thumbnail(self, item_id: str, width: int = 300,
@@ -566,7 +662,7 @@ class DaminionClient:
             except Exception:
                 pass
 
-    def test_connection(self) -> Dict[str, any]:
+    def test_connection(self) -> Dict[str, Any]:
         """
         Test connection and return server statistics.
 
