@@ -248,8 +248,11 @@ def process_daminion_worker(gui_instance, categories, keywords, items=None):
                 elif model_task == config.MODEL_TASK_IMAGE_TO_TEXT:
                     # For VL models like Qwen, providing a prompt is often necessary.
                     # We pass the image and a generic prompt to guide the generation.
-                    prompt = "<|user|>\nDescribe the image.<|end|>\n<|assistant|>\n"
-                    result = gui_instance.model([{"image": image, "prompt": prompt}], generate_kwargs={"max_new_tokens": 200})
+                    messages = [
+                        {"role": "user", "content": [{"type": "image"}, {"type": "text", "text": "Describe the image."}]},
+                    ]
+                    prompt = gui_instance.model.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+                    result = gui_instance.model(image, prompt=prompt, generate_kwargs={"max_new_tokens": 200})
                     if result and len(result) > 0:
                         generated_text = result[0][0].get('generated_text', '')
                         generated_keywords = [w.strip() for w in generated_text.split(',') if len(w.strip()) > 2][:15]
