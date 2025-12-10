@@ -118,6 +118,22 @@ def load_model_worker(gui_instance, model_id):
         gui_instance.q.put(("error", f"Failed to load model: {e}"))
 
 
+def find_local_models_worker(gui_instance):
+    """Worker thread to find locally cached models.
+
+    Args:
+        gui_instance: Reference to main GUI instance
+    """
+    try:
+        task = gui_instance.model_task.get()
+        logging.info(f"Scanning local cache for models with task: '{task}'")
+        local_models = huggingface_utils.find_local_models_by_task(task)
+        gui_instance.q.put(("models_found", (local_models, local_models)))
+    except Exception as e:
+        logging.exception("Failed to find local models from cache.")
+        gui_instance.q.put(("error", f"Failed to scan local model cache: {e}"))
+
+
 def process_daminion_worker(gui_instance, categories, keywords, items=None):
     """Worker thread for processing Daminion items.
 
@@ -156,6 +172,10 @@ def process_daminion_worker(gui_instance, categories, keywords, items=None):
             logging.error(f"[GUI] ✗ No items retrieved from Daminion")
             gui_instance.q.put(("error", "No items retrieved from Daminion"))
             return
+
+        # Ensure items is a list, even if the API call returned None
+        if items is None:
+            items = []
 
         # Validate and flatten items
         if items and isinstance(items[0], list):
@@ -226,10 +246,16 @@ def process_daminion_worker(gui_instance, categories, keywords, items=None):
                             )
 
                 elif model_task == config.MODEL_TASK_IMAGE_TO_TEXT:
-                    result = gui_instance.model(image)
+                    # For VL models like Qwen, providing a prompt is often necessary.
+                    # We pass the image and a generic prompt to guide the generation.
+                    messages = [
+                        {"role": "user", "content": [{"type": "image"}, {"type": "text", "text": "Describe the image."}]},
+                    ]
+                    prompt = gui_instance.model.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+                    result = gui_instance.model(image, prompt=prompt, generate_kwargs={"max_new_tokens": 200})
                     if result and len(result) > 0:
-                        generated_text = result[0].get('generated_text', '')
-                        generated_keywords = [w for w in generated_text.split() if len(w) > 3][:10]
+                        generated_text = result[0][0].get('generated_text', '')
+                        generated_keywords = [w.strip() for w in generated_text.split(',') if len(w.strip()) > 2][:15]
                         logging.info(f"[GUI] ✓ Item {item_id}: Generated keywords={generated_keywords}")
                         gui_instance.daminion_client.update_item_metadata(
                             str(item_id), keywords=generated_keywords
@@ -328,9 +354,9 @@ def refresh_daminion_collections_worker(gui_instance):
             gui_instance.q.put(("error", "Daminion client not initialized"))
             return
 
-        cols = gui_instance.daminion_client.get_shared_collections(index=0, page_size=200)
-        gui_instance.q.put(("daminion_collections", cols))
-        gui_instance.q.put(("status_update", f"Found {len(cols)} shared collections on server."))
+        collections = gui_instance.daminion_client.get_shared_collections(index=0, page_size=200)
+        gui_instance.q.put(("daminion_collections", collections))
+        gui_instance.q.put(("status_update", f"Found {len(collections)} shared collections on server."))
     except Exception as e:
         logging.exception("Failed to refresh collections")
         gui_instance.q.put(("error", f"Failed to fetch collections: {e}"))

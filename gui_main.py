@@ -11,6 +11,7 @@ import queue
 import shutil
 import time
 from pathlib import Path
+from functools import partial
 
 import config
 from config_manager import ConfigManager
@@ -49,6 +50,8 @@ class ImageTaggerGUI(tk.Tk):
         self.report = ProcessingReport()
         self.processing_start_time = None
 
+        self.all_models = set()
+        self.downloaded_models = set()
         # Initialize attributes for Pylance
         self.daminion_url_entry: Optional[ttk.Entry] = None
         self.daminion_username_entry: Optional[ttk.Entry] = None
@@ -85,6 +88,7 @@ class ImageTaggerGUI(tk.Tk):
             pass
 
         self.after(100, self.process_queue)
+        self.after(200, self.scan_local_models) # Scan for local models on startup
         logging.info("GUI initialized with step-by-step workflow.")
 
     def _create_menu(self):
@@ -167,6 +171,15 @@ class ImageTaggerGUI(tk.Tk):
 
     def calculate_time_remaining(self, completed, total):
         return gui_handlers.calculate_time_remaining(self, completed, total)
+
+    def scan_local_models(self):
+        """Scan for locally cached models on startup."""
+        assert self.model_task is not None
+        assert self.status_label is not None
+        task = self.model_task.get()
+        self.status_label.config(text="Status: Scanning for locally cached models...")
+        logging.info("Scanning for local models on startup.")
+        threading.Thread(target=gui_workers.find_local_models_worker, args=(self,), daemon=True).start()
 
     # Worker thread launchers
     def connect_daminion(self):
@@ -349,7 +362,7 @@ class ImageTaggerGUI(tk.Tk):
         items_to_process = None
 
         if scope == 'untagged':
-            items, total = self.daminion_client.get_untagged_items()
+            items, _ = self.daminion_client.get_untagged_items()
             if not items:
                 messagebox.showinfo("Info", "No untagged items found in Daminion.")
                 return
@@ -431,15 +444,22 @@ class ImageTaggerGUI(tk.Tk):
                 assert self.model_listbox is not None
                 assert self.status_label is not None
                 assert self.find_models_button is not None
+                
+                model_ids, downloaded = data
+                self.all_models.update(model_ids)
+                self.downloaded_models.update(downloaded)
+
                 self.model_listbox.delete(0, tk.END)
-                model_ids, downloaded_models = data
-                for model_id in model_ids:
-                    if model_id in downloaded_models:
+                
+                sorted_models = sorted(list(self.all_models))
+
+                for model_id in sorted_models:
+                    if model_id in self.downloaded_models:
                         self.model_listbox.insert(tk.END, f"{model_id} ([OK] cached)")
                         self.model_listbox.itemconfig(tk.END, fg='green')
                     else:
                         self.model_listbox.insert(tk.END, model_id)
-                self.status_label.config(text=f"Status: Found {len(model_ids)} models. Select one to see details.")
+                self.status_label.config(text=f"Status: Found {len(self.all_models)} models. Select one to see details.")
                 self.find_models_button.config(state="normal")
                 self._update_step_states()
 
@@ -577,16 +597,22 @@ class ImageTaggerGUI(tk.Tk):
                 assert self.daminion_collection_combo is not None
                 assert self.refresh_collections_btn is not None
                 cols = data or []
+                
+                # The API response can be a list, or a dict containing the list.
+                # This logic robustly finds the list of collections.
                 if isinstance(cols, dict):
-                    vals = cols.get('items') or cols.get('collections') or list(cols.values())
-                    cols = vals or []
+                    collections_list = cols.get('collections') or cols.get('items') or cols.get('data')
+                    if not isinstance(collections_list, list) and isinstance(cols.get('data'), dict):
+                         collections_list = (cols['data'].get('collections') or cols['data'].get('items'))
+                    cols = collections_list if isinstance(collections_list, list) else []
 
                 self.daminion_collections = cols
                 names = []
                 for c in cols:
-                    title = c.get('name') or c.get('title') or c.get('code') or str(c.get('id') or '')
-                    idx = c.get('id') or c.get('code') or c.get('collectionId') or ''
-                    names.append(f"{title} ({idx})" if idx else title)
+                    if isinstance(c, dict):
+                        title = c.get('name') or c.get('title') or c.get('code') or str(c.get('id') or '')
+                        idx = c.get('id') or c.get('code') or c.get('collectionId') or ''
+                        names.append(f"{title} ({idx})" if idx else title)
 
                 self.daminion_collection_combo['values'] = names
                 if names:
