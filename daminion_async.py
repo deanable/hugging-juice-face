@@ -229,38 +229,33 @@ class AsyncDaminionClient:
         """
         total_count = await self.get_total_count()
         all_items = []
-        current_id = 1
 
-        if max_items:
+        if max_items is not None:
             total_count = min(total_count, max_items)
 
-        # Create tasks for parallel batch fetching
+        if total_count == 0:
+            return []
+
+        # Create tasks for all pages
         tasks = []
-        while current_id < total_count + batch_size:
-            item_ids = list(range(current_id, min(current_id + batch_size, total_count + batch_size)))
+        for i in range(1, total_count + 1, batch_size):
+            end_id = min(i + batch_size - 1, total_count)
+            item_ids = list(range(i, end_id + 1))
             tasks.append(self.get_media_items_by_ids(item_ids))
-            current_id += batch_size
 
-            # Process in chunks to avoid overwhelming the server
-            if len(tasks) >= 5:
-                batch_results = await asyncio.gather(*tasks, return_exceptions=True)
-                for result in batch_results:
-                    if isinstance(result, Exception):
-                        logging.error(f"Batch fetch failed: {result}")
-                    elif isinstance(result, list):
-                        all_items.extend(result)
-                tasks = []
-
-        # Process remaining tasks
+        # Concurrently run all tasks, with concurrency limited by the semaphore
         if tasks:
             batch_results = await asyncio.gather(*tasks, return_exceptions=True)
             for result in batch_results:
                 if isinstance(result, Exception):
-                    logging.error(f"Batch fetch failed: {result}")
+                    # Log the exception but continue processing other results
+                    logging.error(f"[ASYNC DAMINION] Batch fetch failed: {result}")
                 elif isinstance(result, list):
                     all_items.extend(result)
 
-        if max_items:
+        # Ensure the final list does not exceed max_items, as batching might
+        # slightly over-fetch if max_items is not a multiple of batch_size.
+        if max_items is not None:
             all_items = all_items[:max_items]
 
         return all_items
