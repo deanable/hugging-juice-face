@@ -3,6 +3,9 @@ Pillow
 piexif
 iptcinfo3
 
+# Modern GUI framework
+customtkinter
+
 # Configuration validation
 pydantic
 pydantic-settings
