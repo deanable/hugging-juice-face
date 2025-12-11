@@ -511,6 +511,8 @@ def _find_models_worker(gui_instance):
 def _update_model_list(gui_instance, models):
     """Update the model list display."""
     try:
+        from huggingface_utils import is_model_downloaded
+
         # Clear existing models
         for widget in gui_instance.model_listbox.winfo_children():
             widget.destroy()
@@ -518,27 +520,50 @@ def _update_model_list(gui_instance, models):
         # Add new models
         gui_instance.all_models = set()
         for model in models:
-            gui_instance.all_models.add(model['id'])
+            model_id = model['id']
+            gui_instance.all_models.add(model_id)
             
             model_frame = ctk.CTkFrame(gui_instance.model_listbox)
-            model_frame.pack(fill="x", padx=5, pady=2)
+            model_frame.pack(fill="x", padx=5, pady=5)
             
-            model_label = ctk.CTkLabel(
-                model_frame,
-                text=f"🤖 {model['id']}",
-                font=ctk.CTkFont(weight="bold"),
-                anchor="w"
-            )
-            model_label.pack(fill="x", padx=10, pady=(5, 0))
+            # Check if model is cached
+            is_cached = is_model_downloaded(model_id)
+            cached_text = "✅ Cached" if is_cached else "☁️ Cloud"
+            cached_color = "green" if is_cached else ("gray", "gray")
+
+            # Radio button for selection
+            radio_args = {
+                "text": f"{model_id}   [{cached_text}]",
+                "variable": gui_instance.selected_model_var,
+                "value": model_id,
+                "font": ctk.CTkFont(weight="bold")
+            }
+
+            # Only set text_color for cached items to highlight them,
+            # otherwise let CTk handle default theme colors (black/white)
+            if is_cached:
+                radio_args["text_color"] = cached_color
+
+            radio_btn = ctk.CTkRadioButton(model_frame, **radio_args)
+            radio_btn.pack(anchor="w", padx=10, pady=(10, 5))
+
+            # Description
+            description = model.get('description')
+            if not description:
+                # Try to get description from other fields if available or use downloads count
+                downloads = model.get('downloads', 0)
+                likes = model.get('likes', 0)
+                description = f"Downloads: {downloads} | Likes: {likes}"
             
             desc_label = ctk.CTkLabel(
                 model_frame,
-                text=f"📝 {model.get('description', 'No description')[:100]}...",
+                text=description,
                 font=ctk.CTkFont(size=11),
                 text_color="gray",
-                anchor="w"
+                anchor="w",
+                wraplength=400
             )
-            desc_label.pack(fill="x", padx=10, pady=(0, 5))
+            desc_label.pack(fill="x", padx=35, pady=(0, 10))
         
         # Re-enable search button
         gui_instance.find_models_button.configure(state="normal", text="🔍 Find Models")
@@ -552,14 +577,62 @@ def _update_model_list(gui_instance, models):
 
 def on_load_model(gui_instance):
     """Handle load model button click."""
-    # This would typically open a dialog to select a model from the list
-    # For now, we'll show a placeholder message
-    show_modern_messagebox(
-        gui_instance,
-        "Model Selection",
-        "Please select a model from the list above by clicking on it.",
-        "info"
-    )
+    selected_model = gui_instance.selected_model_var.get()
+
+    if not selected_model:
+        show_modern_messagebox(
+            gui_instance,
+            "Model Selection",
+            "Please select a model from the list above.",
+            "warning"
+        )
+        return
+
+    try:
+        gui_instance.load_model_button.configure(
+            text="⏳ Loading...",
+            state="disabled"
+        )
+
+        # Start model loading in worker thread
+        import threading
+        thread = threading.Thread(
+            target=_load_model_worker,
+            args=(gui_instance, selected_model),
+            daemon=True
+        )
+        thread.start()
+
+    except Exception as e:
+        logging.error(f"Failed to start model loading: {e}")
+        gui_instance.load_model_button.configure(
+            text="📥 Load Selected Model",
+            state="normal"
+        )
+
+def _load_model_worker(gui_instance, model_id):
+    """Worker function for loading selected model."""
+    try:
+        from huggingface_utils import load_model_with_progress
+
+        task = gui_instance.model_task.get()
+        load_model_with_progress(model_id, task, gui_instance.q)
+
+        gui_instance.after(0, lambda: gui_instance.load_model_button.configure(
+            text="📥 Load Selected Model",
+            state="normal"
+        ))
+
+    except Exception as e:
+        logging.error(f"Model loading worker error: {e}")
+        gui_instance.q.put({
+            'type': 'error',
+            'error': str(e)
+        })
+        gui_instance.after(0, lambda: gui_instance.load_model_button.configure(
+            text="📥 Load Selected Model",
+            state="normal"
+        ))
 
 
 def on_start_processing(gui_instance):
