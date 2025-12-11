@@ -28,6 +28,10 @@ import gui_steps_modern as gui_steps
 import gui_handlers_modern as gui_handlers
 import gui_workers
 
+# Import enhanced progress tracking
+from enhanced_progress_display import create_enhanced_progress_display, setup_enhanced_progress_monitoring
+from enhanced_progress import get_progress_tracker, ProgressStage, set_progress_stage
+
 
 class ModernImageTaggerGUI(ctk.CTk):
     """Main application window with step-by-step workflow using CustomTkinter."""
@@ -163,8 +167,12 @@ class ModernImageTaggerGUI(ctk.CTk):
         gui_steps.create_step3_config(self.tab_view.tab("⚙️ Step 3: Config"), self)
         gui_steps.create_step4_process(self.tab_view.tab("▶️ Step 4: Process"), self)
 
-        # Progress section at bottom
-        gui_steps.create_progress_section(main_container, self)
+        # Enhanced Progress section at bottom
+        self.enhanced_progress_display = create_enhanced_progress_display(main_container)
+        self.enhanced_progress_display.pack(fill="x", pady=(0, 20))
+        
+        # Setup enhanced progress monitoring
+        setup_enhanced_progress_monitoring(self, self.enhanced_progress_display)
 
     def _toggle_theme(self):
         """Toggle between light and dark mode."""
@@ -266,26 +274,44 @@ class ModernImageTaggerGUI(ctk.CTk):
         logging.info(f"Model loaded successfully: {message['model_name']}")
 
     def _on_model_download_progress(self, message):
-        """Handle model download progress."""
+        """Handle model download progress with enhanced tracking."""
+        progress = message.get('progress', 0.0)
+        status = message.get('status', '')
+        bytes_downloaded = message.get('bytes_downloaded', 0)
+        total_bytes = message.get('total_bytes', 0)
+        current_file = message.get('current_file', '')
+        
+        # Update enhanced progress tracker
+        tracker = get_progress_tracker()
+        tracker.update_download_progress(bytes_downloaded, total_bytes, current_file)
+        
+        # Update legacy UI elements if they exist
         if self.model_progress_bar:
-            progress = message.get('progress', 0.0)
             self.model_progress_bar.set(progress)
-            if message.get('status'):
-                self.model_progress_label.configure(text=message['status'])
+        if self.model_progress_label and status:
+            self.model_progress_label.configure(text=status)
 
     def _on_progress_update(self, message):
-        """Handle progress update message."""
+        """Handle progress update message with enhanced tracking."""
         progress = message.get('progress', 0.0)
         current = message.get('current', 0)
         total = message.get('total', 0)
         processed = message.get('processed', [])
+        current_image = message.get('current_image', '')
+        sub_stage = message.get('sub_stage', '')
+        sub_stage_progress = message.get('sub_stage_progress', 0.0)
         
+        # Update enhanced progress tracker
+        tracker = get_progress_tracker()
+        tracker.update_processing_progress(current, sub_stage, sub_stage_progress)
+        
+        # Update legacy UI elements if they exist
         if self.progress_bar:
             self.progress_bar.set(progress)
         
         status_text = f"Processing: {current}/{total} images"
-        if message.get('current_image'):
-            status_text += f" | {message['current_image']}"
+        if current_image:
+            status_text += f" | {current_image}"
         
         if self.progress_label:
             self.progress_label.configure(text=status_text)
@@ -302,8 +328,24 @@ class ModernImageTaggerGUI(ctk.CTk):
             logging.info(f"Processed: {latest.get('filename', 'Unknown')} -> {latest.get('category', 'N/A')}")
 
     def _on_status_update(self, message):
-        """Handle status update message."""
+        """Handle status update message with enhanced stage tracking."""
         status_text = message.get('status', '')
+        
+        # Update enhanced progress tracker with stage information
+        if status_text:
+            if "downloading" in status_text.lower():
+                set_progress_stage(ProgressStage.DOWNLOADING_MODEL, sub_stage=status_text)
+            elif "connecting" in status_text.lower():
+                set_progress_stage(ProgressStage.CONNECTING, sub_stage=status_text)
+            elif "loading model" in status_text.lower():
+                set_progress_stage(ProgressStage.LOADING_MODEL, sub_stage=status_text)
+            elif "processing" in status_text.lower():
+                set_progress_stage(ProgressStage.PROCESSING_IMAGES, sub_stage=status_text)
+            elif "analyzing" in status_text.lower():
+                set_progress_stage(ProgressStage.ANALYZING_IMAGE, sub_stage=status_text)
+            elif "updating metadata" in status_text.lower():
+                set_progress_stage(ProgressStage.UPDATING_METADATA, sub_stage=status_text)
+        
         if self.status_label:
             self.status_label.configure(text=f"ℹ️ {status_text}")
         logging.info(f"Status: {status_text}")

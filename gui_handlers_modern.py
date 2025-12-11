@@ -461,21 +461,44 @@ def on_find_models(gui_instance):
 
 
 def _find_models_worker(gui_instance):
-    """Worker function for finding models."""
+    """Worker function for finding models with enhanced progress tracking."""
     try:
+        from enhanced_progress import set_progress_stage, ProgressStage
         from huggingface_utils import HuggingFaceUtils
+        
+        # Set initial stage
+        set_progress_stage(ProgressStage.INITIALIZING, sub_stage="Searching for AI models")
         
         # Get models based on selected task
         task = gui_instance.model_task.get() if gui_instance.model_task else config.MODEL_TASK_IMAGE_CLASSIFICATION
         
+        set_progress_stage(ProgressStage.CONNECTING, sub_stage="Connecting to Hugging Face Hub")
+        
         hf_utils = HuggingFaceUtils()
+        
+        # Send progress updates during search
+        gui_instance.q.put({
+            'type': 'status_update',
+            'status': 'Searching for available models...'
+        })
+        
+        set_progress_stage(ProgressStage.PROCESSING_IMAGES, sub_stage="Processing model list")
         models = hf_utils.search_models(task, limit=20)
+        
+        # Send completion status
+        gui_instance.q.put({
+            'type': 'status_update',
+            'status': f'Found {len(models)} models for {task}'
+        })
         
         # Update UI in main thread
         gui_instance.after(0, lambda: _update_model_list(gui_instance, models))
         
     except Exception as e:
         logging.error(f"Model search failed: {e}")
+        from enhanced_progress import get_progress_tracker
+        get_progress_tracker().mark_error(f"Model search failed: {e}")
+        
         gui_instance.after(0, lambda: gui_instance.find_models_button.configure(
             state="normal", text="🔍 Find Models"
         ))
@@ -562,35 +585,97 @@ def on_start_processing(gui_instance):
 
 
 def _start_processing_worker(gui_instance):
-    """Worker function for image processing."""
+    """Worker function for image processing with granular progress tracking."""
     try:
-        # This would contain the actual processing logic
-        # For now, just send progress updates
-        for i in range(100):
+        from enhanced_progress import set_progress_stage, ProgressStage, get_progress_tracker
+        
+        # Start enhanced progress tracking
+        tracker = get_progress_tracker()
+        tracker.start_tracking(total_items=100)  # Assuming 100 images for demo
+        
+        set_progress_stage(ProgressStage.INITIALIZING, sub_stage="Starting image processing")
+        
+        # Simulate realistic image processing with granular sub-stages
+        total_images = 100
+        sub_stages = [
+            "downloading_thumbnail",
+            "loading_image", 
+            "ai_inference",
+            "extracting_results",
+            "updating_metadata"
+        ]
+        
+        for i in range(total_images):
             if gui_instance.stop_event.is_set():
+                set_progress_stage(ProgressStage.ERROR, sub_stage="Processing stopped by user")
                 break
             
-            progress = i / 100.0
+            # Update main progress
+            tracker.update_processing_progress(i + 1)
+            
+            # Simulate each sub-stage with progress updates
+            for sub_stage_idx, sub_stage in enumerate(sub_stages):
+                if gui_instance.stop_event.is_set():
+                    break
+                
+                # Update sub-stage progress
+                set_progress_stage(ProgressStage.PROCESSING_IMAGES, sub_stage=sub_stage.replace('_', ' ').title())
+                tracker.update_processing_progress(i + 1, sub_stage, 0.0)
+                
+                # Simulate sub-stage completion with progress updates
+                for sub_progress in range(0, 101, 10):  # 0%, 10%, 20%, ..., 100%
+                    if gui_instance.stop_event.is_set():
+                        break
+                    
+                    tracker.update_processing_progress(i + 1, sub_stage, float(sub_progress))
+                    
+                    # Send granular progress update to GUI
+                    gui_instance.q.put({
+                        'type': 'progress',
+                        'progress': (i + (sub_stage_idx + sub_progress/100.0) / len(sub_stages)) / total_images,
+                        'current': i + 1,
+                        'total': total_images,
+                        'current_image': f"image_{i+1:03d}.jpg",
+                        'sub_stage': sub_stage,
+                        'sub_stage_progress': sub_progress
+                    })
+                    
+                    # Simulate realistic timing for different sub-stages
+                    if sub_stage == "ai_inference":
+                        time.sleep(0.05)  # Longer for AI processing
+                    elif sub_stage == "downloading_thumbnail":
+                        time.sleep(0.02)  # Medium for downloads
+                    else:
+                        time.sleep(0.01)  # Quick for other operations
+                
+                if gui_instance.stop_event.is_set():
+                    break
+            
+            # Mark current image as complete
+            set_progress_stage(ProgressStage.COMPLETE, sub_stage=f"Completed {i+1}/{total_images} images")
+            
+            # Send update for completed image
+            gui_instance.q.put({
+                'type': 'status_update',
+                'status': f'Completed image {i+1}/{total_images}: image_{i+1:03d}.jpg'
+            })
+        
+        if not gui_instance.stop_event.is_set():
+            # Mark processing as complete
+            tracker.mark_complete()
+            set_progress_stage(ProgressStage.COMPLETE, sub_stage="All images processed successfully!")
             
             gui_instance.q.put({
-                'type': 'progress',
-                'progress': progress,
-                'current': i,
-                'total': 100,
-                'current_image': f"image_{i}.jpg"
+                'type': 'progress_done',
+                'processed_count': total_images,
+                'error_count': 0
             })
-            
-            time.sleep(0.1)  # Simulate processing time
-        
-        # Processing complete
-        gui_instance.q.put({
-            'type': 'progress_done',
-            'processed_count': i,
-            'error_count': 0
-        })
         
     except Exception as e:
         logging.error(f"Processing error: {e}")
+        from enhanced_progress import get_progress_tracker
+        get_progress_tracker().mark_error(str(e))
+        
         gui_instance.q.put({
             'type': 'error',
             'error': str(e)
