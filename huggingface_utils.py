@@ -2,6 +2,7 @@
 
 import logging
 import os
+import shutil
 from pathlib import Path
 from functools import partial
 from tqdm import tqdm
@@ -48,6 +49,17 @@ class TqdmToQueue(tqdm):
     def set_overall_total_size(cls, size):
         with cls._lock:
             cls._overall_total_size = size
+
+def get_cache_dir():
+    """Returns the Hugging Face cache directory."""
+    return HUGGINGFACE_HUB_CACHE
+
+def clear_cache():
+    """Clears the Hugging Face Hub cache directory."""
+    cache_path = Path(HUGGINGFACE_HUB_CACHE)
+    if cache_path.exists():
+        shutil.rmtree(cache_path)
+        logging.info("Hugging Face cache cleared.")
 
 def get_model_cache_dir(model_id):
     """Returns the cache directory for a given model."""
@@ -139,7 +151,8 @@ def find_local_models_by_task(task: str) -> list[str]:
         if not model_dir.is_dir():
             continue
 
-        model_id = model_dir.name[len("models--"):].replace("--", "/")
+        model_id = model_dir.name[len("models--"):
+].replace("--", "/")
         try:
             # Check for a config.json in the latest snapshot
             snapshot_dirs = [d for d in (model_dir / "snapshots").iterdir() if d.is_dir()]

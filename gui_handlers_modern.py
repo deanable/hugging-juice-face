@@ -420,19 +420,22 @@ def _connect_daminion_worker(gui_instance, url, username, password):
         
         # Create client and test connection
         client = DaminionClient(url, username, password)
-        items = client.get_media_items()
+        status = client.test_connection()
         
         # Store client and update UI
-        gui_instance.daminion_client = client
-        
-        # Update UI in main thread
-        gui_instance.after(0, lambda: gui_instance.daminion_status_label.configure(
-            text=f"✅ Connected: {len(items)} items", text_color="green"
-        ))
-        gui_instance.after(0, lambda: gui_instance.q.put({
-            'type': 'daminion_connected',
-            'item_count': len(items)
-        }))
+        if status['connected']:
+            gui_instance.daminion_client = client
+            
+            # Update UI in main thread
+            gui_instance.after(0, lambda: gui_instance.daminion_status_label.configure(
+                text=f"✅ Connected: {status.get('total_items', 0)} items", text_color="green"
+            ))
+            gui_instance.after(0, lambda: gui_instance.q.put({
+                'type': 'daminion_connected',
+                'item_count': status.get('total_items', 0)
+            }))
+        else:
+            raise Exception(status.get('error', 'Unknown connection error'))
         
     except Exception as e:
         logging.error(f"Daminion connection failed: {e}")
@@ -464,7 +467,7 @@ def _find_models_worker(gui_instance):
     """Worker function for finding models with enhanced progress tracking."""
     try:
         from enhanced_progress import set_progress_stage, ProgressStage
-        from huggingface_utils import HuggingFaceUtils
+        from huggingface_hub import list_models
         
         # Set initial stage
         set_progress_stage(ProgressStage.INITIALIZING, sub_stage="Searching for AI models")
@@ -474,8 +477,6 @@ def _find_models_worker(gui_instance):
         
         set_progress_stage(ProgressStage.CONNECTING, sub_stage="Connecting to Hugging Face Hub")
         
-        hf_utils = HuggingFaceUtils()
-        
         # Send progress updates during search
         gui_instance.q.put({
             'type': 'status_update',
@@ -483,16 +484,19 @@ def _find_models_worker(gui_instance):
         })
         
         set_progress_stage(ProgressStage.PROCESSING_IMAGES, sub_stage="Processing model list")
-        models = hf_utils.search_models(task, limit=20)
+        models = list_models(filter=task, sort="downloads", direction=-1, limit=20)
         
+        # Convert ModelInfo objects to dictionaries
+        model_dicts = [model.__dict__ for model in models]
+
         # Send completion status
         gui_instance.q.put({
             'type': 'status_update',
-            'status': f'Found {len(models)} models for {task}'
+            'status': f'Found {len(model_dicts)} models for {task}'
         })
         
         # Update UI in main thread
-        gui_instance.after(0, lambda: _update_model_list(gui_instance, models))
+        gui_instance.after(0, lambda: _update_model_list(gui_instance, model_dicts))
         
     except Exception as e:
         logging.error(f"Model search failed: {e}")
@@ -720,8 +724,8 @@ def on_refresh_collections(gui_instance):
 # Menu functions
 def show_cache_path(gui_instance):
     """Show cache path information."""
-    from huggingface_utils import HuggingFaceUtils
-    cache_path = HuggingFaceUtils.get_cache_dir()
+    from huggingface_utils import get_cache_dir
+    cache_path = get_cache_dir()
     show_modern_messagebox(
         gui_instance,
         "Cache Location",
@@ -739,8 +743,8 @@ def clear_cache(gui_instance):
     
     if result:
         try:
-            from huggingface_utils import HuggingFaceUtils
-            HuggingFaceUtils.clear_cache()
+            from huggingface_utils import clear_cache
+            clear_cache()
             show_modern_messagebox(
                 gui_instance,
                 "Cache Cleared",
@@ -809,9 +813,9 @@ def show_report_summary(gui_instance):
 def scan_local_models(gui_instance):
     """Scan for locally available models."""
     try:
-        from huggingface_utils import HuggingFaceUtils
-        hf_utils = HuggingFaceUtils()
-        local_models = hf_utils.get_local_models()
+        import huggingface_utils
+        task = gui_instance.model_task.get()
+        local_models = huggingface_utils.find_local_models_by_task(task)
         gui_instance.downloaded_models = set(local_models)
         logging.info(f"Found {len(local_models)} local models")
     except Exception as e:
