@@ -38,6 +38,15 @@ def test_get_flagged_items_filters(monkeypatch):
         {'id': 4, 'fileName': 'flagged_image.jpg'},
     ]
 
+    # Mock the search endpoints to return None so it falls back to client-side filtering
+    def fake_search_items(query, page_size=None):
+        return None
+        
+    def fake_get_items_by_query(query, operators, index=0, page_size=500):
+        return None
+
+    client.search_items = fake_search_items
+    client.get_items_by_query = fake_get_items_by_query
     client.get_all_items_paginated = lambda batch_size, max_items=None: sample
 
     flagged = client.get_flagged_items()
