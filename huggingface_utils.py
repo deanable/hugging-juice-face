@@ -334,7 +334,7 @@ def load_model_with_progress(model_id, task, q):
             set_progress_stage(ProgressStage.COMPLETE, sub_stage="Model loaded successfully")
         
         logging.info(f"Model pipeline loaded successfully for: {model_id}")
-        q.put(("model_loaded", {"model": model, "model_name": model_id}))
+        q.put({"type": "model_loaded", "model": model, "model_name": model_id})
 
     except Exception as e:
         logging.exception(f"Failed to load model: {model_id}")
@@ -342,7 +342,7 @@ def load_model_with_progress(model_id, task, q):
         if has_enhanced_progress:
             get_progress_tracker().mark_error(f"Model loading failed: {e}")
         
-        q.put(("error", f"Failed to load model: {e}"))
+        q.put({"type": "error", "error": f"Failed to load model: {e}"})
 
 
 def find_models_by_task(task):
@@ -386,7 +386,7 @@ def load_model(model_id, task, progress_queue=None):
     try:
         q = progress_queue
         if q:
-            q.put(("status_update", f"Downloading/initializing model {model_id}..."))
+            q.put({"type": "status_update", "status": f"Downloading/initializing model {model_id}..."})
 
         if not is_model_downloaded(model_id):
             logging.info(f"Downloading model files for {model_id} (sync)...")
@@ -394,7 +394,7 @@ def load_model(model_id, task, progress_queue=None):
             model_info = api.model_info(repo_id=model_id)
             total_model_size = sum(sibling.size for sibling in (model_info.siblings or []) if sibling.size is not None)
             if q:
-                q.put(("total_model_size", total_model_size))
+                q.put({"type": "total_model_size", "total_model_size": total_model_size})
 
             TqdmToQueue.reset_overall_progress()
             TqdmToQueue.set_overall_total_size(total_model_size)

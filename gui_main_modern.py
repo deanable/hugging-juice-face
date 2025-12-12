@@ -173,6 +173,15 @@ class ModernImageTaggerGUI(ctk.CTk):
         
         # Setup enhanced progress monitoring
         setup_enhanced_progress_monitoring(self, self.enhanced_progress_display)
+        
+        # Status label for general status updates
+        self.status_label = ctk.CTkLabel(
+            main_container,
+            text="Ready to start",
+            font=ctk.CTkFont(size=12),
+            text_color="gray"
+        )
+        self.status_label.pack(anchor="w", pady=(0, 10))
 
     def _toggle_theme(self):
         """Toggle between light and dark mode."""
@@ -264,6 +273,16 @@ class ModernImageTaggerGUI(ctk.CTk):
             self._on_daminion_connected(message)
         elif message_type == 'progress_done':
             self._on_processing_done(message)
+        elif message_type == 'models_found':
+            self._on_models_found(message)
+        elif message_type == 'model_info_found':
+            self._on_model_info_found(message)
+        elif message_type == 'daminion_error':
+            self._on_daminion_error(message)
+        elif message_type == 'total_model_size':
+            self._on_total_model_size(message)
+        elif message_type == 'progress_max':
+            self._on_progress_max(message)
         else:
             logging.warning(f"Unknown message type: {message_type}")
 
@@ -434,6 +453,34 @@ class ModernImageTaggerGUI(ctk.CTk):
             command=completion_dialog.destroy
         )
         close_button.pack(pady=20)
+
+    def _on_models_found(self, message):
+        """Handle models found message."""
+        model_ids = message.get('model_ids', [])
+        downloaded_models = message.get('downloaded_models', [])
+        logging.info(f"Found {len(model_ids)} models")
+        
+    def _on_model_info_found(self, message):
+        """Handle model info found message."""
+        info = message.get('info', {})
+        logging.info(f"Model info retrieved: {info.get('id', 'Unknown')}")
+        
+    def _on_daminion_error(self, message):
+        """Handle Daminion error message."""
+        error_text = message.get('error', 'Unknown Daminion error')
+        logging.error(f"Daminion error: {error_text}")
+        if self.status_label:
+            self.status_label.configure(text=f"❌ Daminion Error: {error_text}")
+            
+    def _on_total_model_size(self, message):
+        """Handle total model size message."""
+        total_size = message.get('total_model_size', 0)
+        logging.info(f"Total model size: {total_size} bytes")
+        
+    def _on_progress_max(self, message):
+        """Handle progress max message."""
+        max_progress = message.get('max', 0)
+        logging.info(f"Max progress set to: {max_progress}")
 
     def on_closing(self):
         """Handle application closing."""

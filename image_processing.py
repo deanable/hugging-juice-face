@@ -224,7 +224,7 @@ def process_single_image(
         ... )
     """
     logging.info(f"Processing image: {image_path}")
-    q.put(("status_update", f"Processing {image_path.name}..."))
+    q.put({"type": "status_update", "status": f"Processing {image_path.name}..."})
 
     valid, error_msg = validate_image(image_path)
     if not valid:

@@ -63,11 +63,11 @@ def connect_daminion_worker(gui_instance, url, username, password):
         else:
             error_msg = status.get('error', 'Unknown error')
             logging.error(f"[GUI] ✗ Connection failed: {error_msg}")
-            gui_instance.q.put(("daminion_error", error_msg))
+            gui_instance.q.put({"type": "daminion_error", "error": error_msg})
 
     except Exception as e:
         logging.exception(f"[GUI] ✗ Daminion connection worker exception")
-        gui_instance.q.put(("daminion_error", str(e)))
+        gui_instance.q.put({"type": "daminion_error", "error": str(e)})
 
 
 def find_models_worker(gui_instance):
@@ -79,11 +79,11 @@ def find_models_worker(gui_instance):
     try:
         task = gui_instance.model_task.get()
         model_ids, downloaded_models = huggingface_utils.find_models_by_task(task)
-        gui_instance.q.put(("models_found", (model_ids, downloaded_models)))
+        gui_instance.q.put({"type": "models_found", "model_ids": model_ids, "downloaded_models": downloaded_models})
         logging.info(f"Found {len(model_ids)} models for task {task}.")
     except Exception as e:
         logging.exception("Failed to find models.")
-        gui_instance.q.put(("error", f"Failed to find models: {e}"))
+        gui_instance.q.put({"type": "error", "error": f"Failed to find models: {e}"})
 
 
 def show_model_info_worker(gui_instance, model_id):
@@ -95,10 +95,10 @@ def show_model_info_worker(gui_instance, model_id):
     """
     try:
         info = huggingface_utils.get_model_info(model_id)
-        gui_instance.q.put(("model_info_found", info))
+        gui_instance.q.put({"type": "model_info_found", "info": info})
     except Exception as e:
         logging.exception(f"Failed to fetch model info for {model_id}.")
-        gui_instance.q.put(("error", f"Failed to fetch model info: {e}"))
+        gui_instance.q.put({"type": "error", "error": f"Failed to fetch model info: {e}"})
 
 
 def load_model_worker(gui_instance, model_id):
@@ -111,11 +111,11 @@ def load_model_worker(gui_instance, model_id):
     try:
         task = gui_instance.model_task.get()
         model = huggingface_utils.load_model(model_id, task, progress_queue=gui_instance.q)
-        gui_instance.q.put(("model_loaded", model))
+        gui_instance.q.put({"type": "model_loaded", "model": model})
         logging.info(f"Model {model_id} loaded successfully.")
     except Exception as e:
         logging.exception(f"Failed to load model {model_id}.")
-        gui_instance.q.put(("error", f"Failed to load model: {e}"))
+        gui_instance.q.put({"type": "error", "error": f"Failed to load model: {e}"})
 
 
 def find_local_models_worker(gui_instance):
@@ -128,10 +128,10 @@ def find_local_models_worker(gui_instance):
         task = gui_instance.model_task.get()
         logging.info(f"Scanning local cache for models with task: '{task}'")
         local_models = huggingface_utils.find_local_models_by_task(task)
-        gui_instance.q.put(("models_found", (local_models, local_models)))
+        gui_instance.q.put({"type": "models_found", "model_ids": local_models, "downloaded_models": local_models})
     except Exception as e:
         logging.exception("Failed to find local models from cache.")
-        gui_instance.q.put(("error", f"Failed to scan local model cache: {e}"))
+        gui_instance.q.put({"type": "error", "error": f"Failed to scan local model cache: {e}"})
 
 
 def process_daminion_worker(gui_instance, categories, keywords, items=None):
@@ -153,24 +153,24 @@ def process_daminion_worker(gui_instance, categories, keywords, items=None):
 
     if not gui_instance.daminion_client:
         logging.error(f"[GUI] ✗ Daminion client not initialized!")
-        gui_instance.q.put(("error", "Daminion client not initialized"))
+        gui_instance.q.put({"type": "error", "error": "Daminion client not initialized"})
         return
 
     if not gui_instance.model:
         logging.error(f"[GUI] ✗ Model not loaded!")
-        gui_instance.q.put(("error", "Model not loaded"))
+        gui_instance.q.put({"type": "error", "error": "Model not loaded"})
         return
 
     try:
         if items is None:
             logging.info(f"[GUI] No pre-filtered items, fetching all from Daminion...")
-            gui_instance.q.put(("status_update", "Fetching items from Daminion..."))
+            gui_instance.q.put({"type": "status_update", "status": "Fetching items from Daminion..."})
             items = gui_instance.daminion_client.get_all_items_paginated(batch_size=100, max_items=None)
             logging.info(f"[GUI] ✓ Fetched {len(items)} items from Daminion")
 
         if not items:
             logging.error(f"[GUI] ✗ No items retrieved from Daminion")
-            gui_instance.q.put(("error", "No items retrieved from Daminion"))
+            gui_instance.q.put({"type": "error", "error": "No items retrieved from Daminion"})
             return
 
         # Ensure items is a list, even if the API call returned None
@@ -194,11 +194,11 @@ def process_daminion_worker(gui_instance, categories, keywords, items=None):
 
         if not items:
             logging.error(f"[GUI] No valid items after validation")
-            gui_instance.q.put(("error", "No valid items to process"))
+            gui_instance.q.put({"type": "error", "error": "No valid items to process"})
             return
 
-        gui_instance.q.put(("progress_max", len(items)))
-        gui_instance.q.put(("status_update", f"Processing {len(items)} items..."))
+        gui_instance.q.put({"type": "progress_max", "max": len(items)})
+        gui_instance.q.put({"type": "status_update", "status": f"Processing {len(items)} items..."})
 
         completed_count = 0
         failed_count = 0
@@ -215,7 +215,7 @@ def process_daminion_worker(gui_instance, categories, keywords, items=None):
                 filename = item.get('fileName', f'item_{item_id}')
 
                 logging.info(f"[GUI] --- Processing item {idx}/{len(items)}: {filename} (ID: {item_id}) ---")
-                gui_instance.q.put(("status_update", f"Processing {filename}..."))
+                gui_instance.q.put({"type": "status_update", "status": f"Processing {filename}..."})
 
                 thumb_path = gui_instance.daminion_client.download_thumbnail(item_id)
 
@@ -263,24 +263,24 @@ def process_daminion_worker(gui_instance, categories, keywords, items=None):
 
                 completed_count += 1
                 logging.info(f"[GUI] ✓ Item {idx}/{len(items)} processed successfully")
-                gui_instance.q.put(("progress", completed_count))
+                gui_instance.q.put({"type": "progress", "current": completed_count})
 
             except Exception as e:
                 failed_count += 1
                 logging.exception(f"[GUI] ✗ Error processing Daminion item {item.get('id')}")
-                gui_instance.q.put(("error", f"Failed to process item: {e}"))
+                gui_instance.q.put({"type": "error", "error": f"Failed to process item: {e}"})
 
         logging.info(f"[GUI] ========== ITEM PROCESSING LOOP COMPLETE ==========")
         logging.info(f"[GUI] Total processed: {completed_count}")
         logging.info(f"[GUI] Total failed: {failed_count}")
 
         gui_instance.daminion_client.cleanup_temp_files()
-        gui_instance.q.put(("progress_done", f"Finished processing {completed_count} Daminion items."))
+        gui_instance.q.put({"type": "progress_done", "processed_count": completed_count, "error_count": failed_count})
         logging.info(f"[GUI] ========== DAMINION PROCESSING WORKER COMPLETE ==========")
 
     except Exception as e:
         logging.exception(f"[GUI] ✗ CRITICAL: Daminion processing worker failed")
-        gui_instance.q.put(("error", f"Daminion processing failed: {e}"))
+        gui_instance.q.put({"type": "error", "error": f"Daminion processing failed: {e}"})
 
 
 def process_images_worker(gui_instance, image_files, categories, keywords):
