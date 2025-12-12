@@ -105,7 +105,7 @@ class ModernImageTaggerGUI(ctk.CTk):
             pass
 
         self.after(100, self.process_queue)
-        self.after(200, self.scan_local_models)  # Scan for local models on startup
+        self.after(200, self.on_find_models)  # Find models on startup
         logging.info("Modern GUI initialized with step-by-step workflow.")
 
     def _create_menu(self):
@@ -231,9 +231,6 @@ class ModernImageTaggerGUI(ctk.CTk):
     def show_report_summary(self):
         gui_handlers.show_report_summary(self)
 
-    def scan_local_models(self):
-        gui_handlers.scan_local_models(self)
-
     # Queue processing
     def process_queue(self):
         """Process messages from worker threads."""
@@ -264,8 +261,15 @@ class ModernImageTaggerGUI(ctk.CTk):
             self._on_daminion_connected(message)
         elif message_type == 'progress_done':
             self._on_processing_done(message)
+        elif message_type == 'models_found':
+            self._on_models_found(message)
         else:
             logging.warning(f"Unknown message type: {message_type}")
+
+    def _on_models_found(self, message):
+        """Handle models found message."""
+        models = message.get('models', [])
+        gui_handlers.update_model_list(self, models)
 
     def _on_model_loaded(self, message):
         """Handle model loaded message."""

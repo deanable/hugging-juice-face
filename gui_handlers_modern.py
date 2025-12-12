@@ -269,11 +269,11 @@ def on_model_task_change(gui_instance, event=None):
     update_task_description(gui_instance)
     update_step_states(gui_instance)
 
-    # Re-scan for cached models when task changes
+    # Re-scan for models when task changes
     try:
-        gui_instance.after(0, lambda: scan_local_models(gui_instance))
+        gui_instance.after(0, gui_instance.on_find_models)
     except Exception as e:
-        logging.error(f"Failed to rescan for cached models after task change: {e}")
+        logging.error(f"Failed to rescan for models after task change: {e}")
 
     try:
         task = gui_instance.model_task.get()
@@ -470,93 +470,85 @@ def on_find_models(gui_instance):
 
 
 def _find_models_worker(gui_instance):
-    """Worker function for finding models with enhanced progress tracking."""
+    """Worker for finding local and online models."""
     try:
+        from huggingface_utils import find_local_models, list_models
         from enhanced_progress import set_progress_stage, ProgressStage
-        from huggingface_hub import list_models
-        
-        # Set initial stage
-        set_progress_stage(ProgressStage.INITIALIZING, sub_stage="Searching for AI models")
-        
-        # Get models based on selected task
-        task = gui_instance.model_task.get() if gui_instance.model_task else config.MODEL_TASK_IMAGE_CLASSIFICATION
-        
-        set_progress_stage(ProgressStage.CONNECTING, sub_stage="Connecting to Hugging Face Hub")
-        
-        # Send progress updates during search
-        gui_instance.q.put({
-            'type': 'status_update',
-            'status': 'Searching for available models...'
-        })
-        
-        set_progress_stage(ProgressStage.PROCESSING_IMAGES, sub_stage="Processing model list")
-        models = list_models(filter=task, sort="downloads", direction=-1, limit=20)
-        
-        # Convert ModelInfo objects to dictionaries
-        model_dicts = [model.__dict__ for model in models]
 
-        # Send completion status
-        gui_instance.q.put({
-            'type': 'status_update',
-            'status': f'Found {len(model_dicts)} models for {task}'
-        })
-        
-        # Update UI in main thread
-        gui_instance.after(0, lambda: _update_model_list(gui_instance, model_dicts))
-        
+        set_progress_stage(ProgressStage.INITIALIZING, sub_stage="Searching for AI models")
+        task = gui_instance.model_task.get()
+
+        # Find all local models
+        gui_instance.q.put({'type': 'status_update', 'status': 'Scanning for local models...'})
+        local_models = find_local_models()
+
+        # Find online models for the current task
+        gui_instance.q.put({'type': 'status_update', 'status': 'Searching Hugging Face Hub...'})
+        online_models_info = list_models(filter=task, sort="downloads", direction=-1, limit=20)
+
+        # Combine and de-duplicate
+        all_models = []
+        seen_ids = set()
+
+        # Add local models first
+        for model_id, model_info in local_models.items():
+            if model_id not in seen_ids:
+                all_models.append({
+                    'id': model_id, 
+                    'is_local': True, 
+                    'description': f"Local model. Task: {model_info['config'].get('pipeline_tag', 'unknown')}"
+                })
+                seen_ids.add(model_id)
+
+        # Add online models
+        for model_info in online_models_info:
+            if model_info.id not in seen_ids:
+                model_dict = model_info.__dict__
+                model_dict['is_local'] = False
+                all_models.append(model_dict)
+                seen_ids.add(model_info.id)
+
+        gui_instance.q.put({'type': 'models_found', 'models': all_models})
+
     except Exception as e:
         logging.error(f"Model search failed: {e}")
-        from enhanced_progress import get_progress_tracker
-        get_progress_tracker().mark_error(f"Model search failed: {e}")
-        
-        gui_instance.after(0, lambda: gui_instance.find_models_button.configure(
-            state="normal", text="🔍 Find Models"
-        ))
+        gui_instance.q.put({'type': 'error', 'error': f"Model search failed: {e}"})
+    finally:
+        gui_instance.after(0, lambda: gui_instance.find_models_button.configure(state="normal", text="🔍 Find Models"))
 
 
-def _update_model_list(gui_instance, models):
+def update_model_list(gui_instance, models):
     """Update the model list display with cached models prioritized."""
     try:
-        from huggingface_utils import is_model_downloaded
-
         # Clear existing models
         for widget in gui_instance.model_listbox.winfo_children():
             widget.destroy()
 
-        # Separate cached and cloud models, prioritize cached ones
-        cached_models = []
-        cloud_models = []
+        # Separate cached and cloud models
+        cached_models = [m for m in models if m.get('is_local')]
+        cloud_models = [m for m in models if not m.get('is_local')]
+        
+        # Remove duplicates (prefer cached)
+        seen_ids = set(m['id'] for m in cached_models)
+        cloud_models = [m for m in cloud_models if m['id'] not in seen_ids]
 
-        for model in models:
-            model_id = model['id']
-            gui_instance.all_models.add(model_id)
-
-            if is_model_downloaded(model_id):
-                cached_models.append(model)
-            else:
-                cloud_models.append(model)
-
-        # Add models in priority order: cached first, then cloud
         all_models_to_show = cached_models + cloud_models
-
-        # Auto-select first cached model if available, otherwise first model
         auto_select_model = None
 
         for model in all_models_to_show:
             model_id = model['id']
+            gui_instance.all_models.add(model_id)
+
             model_frame = ctk.CTkFrame(gui_instance.model_listbox)
             model_frame.pack(fill="x", padx=5, pady=5)
 
-            # Check if model is cached
-            is_cached = is_model_downloaded(model_id)
+            is_cached = model.get('is_local')
             cached_text = "✅ Cached" if is_cached else "☁️ Cloud"
             cached_color = "green" if is_cached else ("gray", "gray")
 
-            # Auto-select first cached model
             if is_cached and not auto_select_model:
                 auto_select_model = model_id
 
-            # Radio button for selection
             radio_args = {
                 "text": f"{model_id}   [{cached_text}]",
                 "variable": gui_instance.selected_model_var,
@@ -564,22 +556,18 @@ def _update_model_list(gui_instance, models):
                 "font": ctk.CTkFont(weight="bold")
             }
 
-            # Highlight cached items in green
             if is_cached:
                 radio_args["text_color"] = cached_color
 
             radio_btn = ctk.CTkRadioButton(model_frame, **radio_args)
             radio_btn.pack(anchor="w", padx=10, pady=(10, 5))
 
-            # Description
             description = model.get('description')
             if not description:
-                # Try to get description from other fields if available or use downloads count
                 downloads = model.get('downloads', 0)
                 likes = model.get('likes', 0)
                 description = f"Downloads: {downloads} | Likes: {likes}"
 
-            # Add special description for cached models
             if is_cached:
                 description = f"✨ {description} - Ready to use!"
 
@@ -593,12 +581,10 @@ def _update_model_list(gui_instance, models):
             )
             desc_label.pack(fill="x", padx=35, pady=(0, 10))
 
-        # Auto-select the first available model (preferring cached ones)
         if auto_select_model:
             gui_instance.selected_model_var.set(auto_select_model)
             gui_instance.load_model_button.configure(state="normal")
 
-        # Update button text and status
         if cached_models:
             gui_instance.find_models_button.configure(
                 state="normal",
@@ -927,79 +913,3 @@ def show_report_summary(gui_instance):
         f"Total processed: {summary.get('total', 0)}\nSuccessful: {summary.get('successful', 0)}\nFailed: {summary.get('failed', 0)}",
         "info"
     )
-
-
-def _populate_with_cached_models(gui_instance, cached_models):
-    """Populate the model list UI with cached models."""
-    try:
-        # Clear existing models
-        for widget in gui_instance.model_listbox.winfo_children():
-            widget.destroy()
-
-        # Add cached models to UI
-        gui_instance.all_models = set(cached_models)
-        
-        # Sort cached models alphabetically for better UX
-        sorted_cached_models = sorted(cached_models)
-        
-        for model_id in sorted_cached_models:
-            model_frame = ctk.CTkFrame(gui_instance.model_listbox)
-            model_frame.pack(fill="x", padx=5, pady=5)
-
-            # Radio button for cached model with green highlight
-            radio_btn = ctk.CTkRadioButton(
-                model_frame,
-                text=f"{model_id}   [✅ Cached]",
-                variable=gui_instance.selected_model_var,
-                value=model_id,
-                font=ctk.CTkFont(weight="bold"),
-                text_color="green"
-            )
-            radio_btn.pack(anchor="w", padx=10, pady=(10, 5))
-
-            # Description for cached model
-            desc_label = ctk.CTkLabel(
-                model_frame,
-                text="✨ Ready to use - no download required",
-                font=ctk.CTkFont(size=11),
-                text_color="green"
-            )
-            desc_label.pack(anchor="w", padx=10, pady=(0, 10))
-
-        # Auto-select the first cached model if available
-        if sorted_cached_models:
-            first_model = sorted_cached_models[0]
-            gui_instance.selected_model_var.set(first_model)
-            gui_instance.load_model_button.configure(state="normal")
-            
-            # Update status
-            gui_instance.q.put({
-                'type': 'status_update',
-                'status': f'🚀 Found {len(cached_models)} cached models for {gui_instance.model_task.get()}'
-            })
-            
-            logging.info(f"UI populated with {len(cached_models)} cached models")
-        
-        # Update button text to reflect cached models
-        if hasattr(gui_instance, 'find_models_button') and gui_instance.find_models_button:
-            gui_instance.find_models_button.configure(text="🔍 Find More Models")
-            
-    except Exception as e:
-        logging.error(f"Failed to populate cached models in UI: {e}")
-
-
-def scan_local_models(gui_instance):
-    """Scan for locally available models and populate UI with them."""
-    try:
-        import huggingface_utils
-        task = gui_instance.model_task.get()
-        local_models = huggingface_utils.find_local_models_by_task(task)
-        gui_instance.downloaded_models = set(local_models)
-        logging.info(f"Found {len(local_models)} local models")
-        
-        # If we found local models, populate the UI immediately
-        if local_models:
-            gui_instance.after(0, lambda: _populate_with_cached_models(gui_instance, local_models))
-            
-    except Exception as e:
-        logging.error(f"Local model scan error: {e}")

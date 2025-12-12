@@ -130,31 +130,24 @@ def find_models_worker(task, q):
         logging.exception("Failed to find models.")
         q.put(("error", f"Failed to find models: {e}"))
 
-def find_local_models_by_task(task: str) -> list[str]:
+def find_local_models() -> dict[str, dict]:
     """
-    Finds locally cached models compatible with a given task by scanning the cache.
-
-    Args:
-        task: The pipeline task to filter by (e.g., 'image-classification').
+    Finds all locally cached models by scanning the cache.
 
     Returns:
-        A list of model IDs that are cached locally and support the task.
+        A dictionary of model information, with model_id as key.
     """
-    local_models = []
+    local_models = {}
     cache_path = Path(HUGGINGFACE_HUB_CACHE)
     if not cache_path.exists():
-        logging.warning("Hugging Face cache directory not found.")
-        return []
+        return {}
 
-    logging.info(f"Scanning cache for local models for task: {task}")
     for model_dir in cache_path.glob("models--*"):
         if not model_dir.is_dir():
             continue
 
-        model_id = model_dir.name[len("models--"):
-].replace("--", "/")
+        model_id = model_dir.name[len("models--"):].replace("--", "/")
         try:
-            # Check for a config.json in the latest snapshot
             snapshot_dirs = [d for d in (model_dir / "snapshots").iterdir() if d.is_dir()]
             if not snapshot_dirs:
                 continue
@@ -165,16 +158,35 @@ def find_local_models_by_task(task: str) -> list[str]:
             if config_path.exists():
                 with open(config_path, "r", encoding="utf-8") as f:
                     model_config = json.load(f)
-                
-                # Check if the model supports the task via its pipeline_tag or architectures
-                if model_config.get("pipeline_tag") == task:
-                    local_models.append(model_id)
+                local_models[model_id] = {
+                    'config': model_config,
+                    'path': latest_snapshot
+                }
         except Exception as e:
             logging.debug(f"Could not inspect model {model_id}: {e}")
             continue
     
-    logging.info(f"Found {len(local_models)} local models for task '{task}'.")
     return local_models
+
+
+def find_local_models_by_task(task: str) -> list[str]:
+    """
+    Finds locally cached models compatible with a given task by scanning the cache.
+
+    Args:
+        task: The pipeline task to filter by (e.g., 'image-classification').
+
+    Returns:
+        A list of model IDs that are cached locally and support the task.
+    """
+    all_local_models = find_local_models()
+    task_specific_models = []
+    for model_id, model_info in all_local_models.items():
+        if model_info['config'].get("pipeline_tag") == task:
+            task_specific_models.append(model_id)
+            
+    logging.info(f"Found {len(task_specific_models)} local models for task '{task}'.")
+    return task_specific_models
 
 
 def show_model_info_worker(model_id, q):
