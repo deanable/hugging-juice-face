@@ -336,7 +336,6 @@ def process_images_worker(gui_instance, image_files, categories, keywords):
                 gui_instance.report.add_result(
                     str(image_path), "", [], False, error_msg, processing_time
                 )
-                gui_instance.q.put(("error", f"Failed to process {image_path.name}: {e}"))
 
     gui_instance.progress_tracker.complete_job()
     gui_instance.q.put(("progress_done", "Finished processing."))

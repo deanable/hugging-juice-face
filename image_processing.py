@@ -102,7 +102,6 @@ def write_metadata_with_retry(
                 time.sleep(retry_delay)
             else:
                 logging.error(f"All metadata write attempts failed for {image_path.name}")
-                q.put(("error", f"Failed to write metadata after {max_retries} attempts: {e}"))
                 return False
     return False
 
@@ -157,7 +156,6 @@ def write_metadata(image_path: Path, category: str, keywords: List[str], q: Queu
 
     except Exception as e:
         logging.exception(f"Failed to write IPTC metadata for {image_path.name}")
-        q.put(("error", f"Could not write IPTC for {image_path.name}: {e}"))
 
     try:
         logging.info(f"Writing EXIF metadata to {image_path.name}")
@@ -187,7 +185,6 @@ def write_metadata(image_path: Path, category: str, keywords: List[str], q: Queu
 
     except Exception as e:
         logging.exception(f"Failed to write EXIF metadata for {image_path.name}")
-        q.put(("error", f"Could not write EXIF for {image_path.name}: {e}"))
 
     return iptc_success or exif_success
 
@@ -233,7 +230,6 @@ def process_single_image(
     if not valid:
         error_full = f"Image validation failed for {image_path.name}: {error_msg}"
         logging.error(error_full)
-        q.put(("error", error_full))
         return False, error_msg
 
     try:
@@ -245,7 +241,6 @@ def process_single_image(
     except Exception as e:
         error_msg = f"Failed to open image {image_path.name}: {e}"
         logging.exception(error_msg)
-        q.put(("error", error_msg))
         return False, str(e)
 
     category = ""
@@ -282,7 +277,6 @@ def process_single_image(
     except Exception as e:
         error_msg = f"Model inference failed for {image_path.name}: {e}"
         logging.exception(error_msg)
-        q.put(("error", error_msg))
         return False, str(e)
 
     success = write_metadata_with_retry(image_path, category, new_keywords, q)

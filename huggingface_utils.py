@@ -79,7 +79,7 @@ def is_model_downloaded(model_id):
         snapshots = os.listdir(snapshot_dir)
         if not snapshots:
             return False
-        latest_snapshot = snapshots[-1]
+        latest_snapshot = sorted(snapshots)[-1]
         
         if model_info.siblings:
             for file_info in model_info.siblings:

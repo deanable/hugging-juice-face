@@ -295,6 +295,9 @@ def create_step2_model(parent, gui_instance):
     model_list_frame = ctk.CTkFrame(model_section, fg_color="transparent")
     model_list_frame.pack(fill="both", expand=True, padx=40, pady=(0, 15))
 
+    # Variable to track selected model
+    gui_instance.selected_model_var = ctk.StringVar(value="")
+
     # Create scrollable frame for models
     gui_instance.model_listbox = ctk.CTkScrollableFrame(model_list_frame, height=200)
     gui_instance.model_listbox.pack(fill="both", expand=True)
