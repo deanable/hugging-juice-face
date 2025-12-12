@@ -9,7 +9,7 @@ from tqdm import tqdm
 from huggingface_hub import list_models, hf_hub_download, snapshot_download, HfApi
 from huggingface_hub.constants import HUGGINGFACE_HUB_CACHE
 from requests.exceptions import HTTPError
-from transformers import pipeline
+from transformers import pipeline, AutoConfig, AutoTokenizer
 from threading import RLock
 import config
 import json
@@ -328,7 +328,21 @@ def load_model_with_progress(model_id, task, q):
             # If we can't inspect the config for any reason, proceed to let pipeline raise a clear error.
             pass
         
-        model = pipeline(task, model=local_model_path)
+        # Try to load tokenizer with failover to slow tokenizer if fast fails (fixes Qwen2-VL local load issue)
+        tokenizer = None
+        try:
+            tokenizer = AutoTokenizer.from_pretrained(local_model_path)
+        except Exception:
+            try:
+                logging.info("Default/Fast tokenizer load failed, trying use_fast=False...")
+                tokenizer = AutoTokenizer.from_pretrained(local_model_path, use_fast=False)
+            except Exception as e:
+                logging.warning(f"Failed to load tokenizer (fast and slow): {e}")
+
+        if tokenizer:
+            model = pipeline(task, model=local_model_path, tokenizer=tokenizer)
+        else:
+            model = pipeline(task, model=local_model_path)
         
         if has_enhanced_progress:
             set_progress_stage(ProgressStage.COMPLETE, sub_stage="Model loaded successfully")
@@ -432,7 +446,24 @@ def load_model(model_id, task, progress_queue=None):
         except Exception:
             # If we can't inspect the config for any reason, proceed to let pipeline raise a clear error.
             pass
-        model = pipeline(task, model=local_model_path)
+        # Try to load tokenizer with failover to slow tokenizer if fast fails (fixes Qwen2-VL local load issue)
+        tokenizer = None
+        try:
+            tokenizer = AutoTokenizer.from_pretrained(local_model_path)
+        except Exception:
+            try:
+                logging.info("Default/Fast tokenizer load failed, trying use_fast=False...")
+                tokenizer = AutoTokenizer.from_pretrained(local_model_path, use_fast=False)
+            except Exception as e:
+                logging.warning(f"Failed to load tokenizer (fast and slow): {e}")
+        
+        if tokenizer:
+            model = pipeline(task, model=local_model_path, tokenizer=tokenizer)
+        else:
+            model = pipeline(task, model=local_model_path)
+
+        logging.info(f"Model pipeline loaded successfully (with pre-loaded tokenizer) for: {model_id} (sync)")
+        return model
         logging.info(f"Model pipeline loaded successfully for: {model_id} (sync)")
         return model
 
