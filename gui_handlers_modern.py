@@ -392,6 +392,9 @@ def show_modern_messagebox(gui_instance, title, message, msg_type="info"):
 
 
 # Event handler functions (simplified versions - full implementations would be in the original handlers)
+import gui_workers
+
+
 def on_daminion_connect(gui_instance):
     """Handle Daminion connection button click."""
     try:
@@ -406,9 +409,8 @@ def on_daminion_connect(gui_instance):
         gui_instance.daminion_status_label.configure(text="🔄 Connecting...", text_color="blue")
         
         # Start connection in worker thread
-        import threading
         thread = threading.Thread(
-            target=_connect_daminion_worker,
+            target=gui_workers.connect_daminion_worker,
             args=(gui_instance, url, username, password),
             daemon=True
         )
@@ -419,35 +421,7 @@ def on_daminion_connect(gui_instance):
         gui_instance.daminion_status_label.configure(text="🔴 Connection failed", text_color="red")
 
 
-def _connect_daminion_worker(gui_instance, url, username, password):
-    """Worker function for Daminion connection."""
-    try:
-        from daminion_client import DaminionClient
-        
-        # Create client and test connection
-        client = DaminionClient(url, username, password)
-        status = client.test_connection()
-        
-        # Store client and update UI
-        if status['connected']:
-            gui_instance.daminion_client = client
-            
-            # Update UI in main thread
-            gui_instance.after(0, lambda: gui_instance.daminion_status_label.configure(
-                text=f"✅ Connected: {status.get('total_items', 0)} items", text_color="green"
-            ))
-            gui_instance.after(0, lambda: gui_instance.q.put({
-                'type': 'daminion_connected',
-                'item_count': status.get('total_items', 0)
-            }))
-        else:
-            raise Exception(status.get('error', 'Unknown connection error'))
-        
-    except Exception as e:
-        logging.error(f"Daminion connection failed: {e}")
-        gui_instance.after(0, lambda: gui_instance.daminion_status_label.configure(
-            text="🔴 Connection failed", text_color="red"
-        ))
+
 
 
 def on_find_models(gui_instance):
@@ -456,9 +430,8 @@ def on_find_models(gui_instance):
         gui_instance.find_models_button.configure(state="disabled", text="🔍 Searching...")
         
         # Start model search in worker thread
-        import threading
         thread = threading.Thread(
-            target=_find_models_worker,
+            target=gui_workers.find_models_worker,
             args=(gui_instance,),
             daemon=True
         )
@@ -469,55 +442,10 @@ def on_find_models(gui_instance):
         gui_instance.find_models_button.configure(state="normal", text="🔍 Find Models")
 
 
-def _find_models_worker(gui_instance):
-    """Worker for finding local and online models."""
-    try:
-        from huggingface_utils import find_local_models, list_models
-        from enhanced_progress import set_progress_stage, ProgressStage
-
-        set_progress_stage(ProgressStage.INITIALIZING, sub_stage="Searching for AI models")
-        task = gui_instance.model_task.get()
-
-        # Find all local models
-        gui_instance.q.put({'type': 'status_update', 'status': 'Scanning for local models...'})
-        local_models = find_local_models()
-
-        # Find online models for the current task
-        gui_instance.q.put({'type': 'status_update', 'status': 'Searching Hugging Face Hub...'})
-        online_models_info = list_models(filter=task, sort="downloads", direction=-1, limit=20)
-
-        # Combine and de-duplicate
-        all_models = []
-        seen_ids = set()
-
-        # Add local models first
-        for model_id, model_info in local_models.items():
-            if model_id not in seen_ids:
-                all_models.append({
-                    'id': model_id, 
-                    'is_local': True, 
-                    'description': f"Local model. Task: {model_info['config'].get('pipeline_tag', 'unknown')}"
-                })
-                seen_ids.add(model_id)
-
-        # Add online models
-        for model_info in online_models_info:
-            if model_info.id not in seen_ids:
-                model_dict = model_info.__dict__
-                model_dict['is_local'] = False
-                all_models.append(model_dict)
-                seen_ids.add(model_info.id)
-
-        gui_instance.q.put({'type': 'models_found', 'models': all_models})
-
-    except Exception as e:
-        logging.error(f"Model search failed: {e}")
-        gui_instance.q.put({'type': 'error', 'error': f"Model search failed: {e}"})
-    finally:
-        gui_instance.after(0, lambda: gui_instance.find_models_button.configure(state="normal", text="🔍 Find Models"))
 
 
-def update_model_list(gui_instance, models):
+
+def update_model_list(gui_instance, models, downloaded_models):
     """Update the model list display with cached models prioritized."""
     try:
         # Clear existing models
@@ -525,24 +453,19 @@ def update_model_list(gui_instance, models):
             widget.destroy()
 
         # Separate cached and cloud models
-        cached_models = [m for m in models if m.get('is_local')]
-        cloud_models = [m for m in models if not m.get('is_local')]
+        cached_models = [m for m in models if m in downloaded_models]
+        cloud_models = [m for m in models if m not in downloaded_models]
         
-        # Remove duplicates (prefer cached)
-        seen_ids = set(m['id'] for m in cached_models)
-        cloud_models = [m for m in cloud_models if m['id'] not in seen_ids]
-
         all_models_to_show = cached_models + cloud_models
         auto_select_model = None
 
-        for model in all_models_to_show:
-            model_id = model['id']
+        for model_id in all_models_to_show:
             gui_instance.all_models.add(model_id)
 
             model_frame = ctk.CTkFrame(gui_instance.model_listbox)
             model_frame.pack(fill="x", padx=5, pady=5)
 
-            is_cached = model.get('is_local')
+            is_cached = model_id in downloaded_models
             cached_text = "✅ Cached" if is_cached else "☁️ Cloud"
             cached_color = "green" if is_cached else ("gray", "gray")
 
@@ -562,14 +485,9 @@ def update_model_list(gui_instance, models):
             radio_btn = ctk.CTkRadioButton(model_frame, **radio_args)
             radio_btn.pack(anchor="w", padx=10, pady=(10, 5))
 
-            description = model.get('description')
-            if not description:
-                downloads = model.get('downloads', 0)
-                likes = model.get('likes', 0)
-                description = f"Downloads: {downloads} | Likes: {likes}"
-
+            description = ""
             if is_cached:
-                description = f"✨ {description} - Ready to use!"
+                description = f"✨ Ready to use!"
 
             desc_label = ctk.CTkLabel(
                 model_frame,
@@ -627,9 +545,8 @@ def on_load_model(gui_instance):
         )
 
         # Start model loading in worker thread
-        import threading
         thread = threading.Thread(
-            target=_load_model_worker,
+            target=gui_workers.load_model_worker,
             args=(gui_instance, selected_model),
             daemon=True
         )
@@ -642,29 +559,7 @@ def on_load_model(gui_instance):
             state="normal"
         )
 
-def _load_model_worker(gui_instance, model_id):
-    """Worker function for loading selected model."""
-    try:
-        from huggingface_utils import load_model_with_progress
 
-        task = gui_instance.model_task.get()
-        load_model_with_progress(model_id, task, gui_instance.q)
-
-        gui_instance.after(0, lambda: gui_instance.load_model_button.configure(
-            text="📥 Load Selected Model",
-            state="normal"
-        ))
-
-    except Exception as e:
-        logging.error(f"Model loading worker error: {e}")
-        gui_instance.q.put({
-            'type': 'error',
-            'error': str(e)
-        })
-        gui_instance.after(0, lambda: gui_instance.load_model_button.configure(
-            text="📥 Load Selected Model",
-            state="normal"
-        ))
 
 
 def on_start_processing(gui_instance):
@@ -680,11 +575,23 @@ def on_start_processing(gui_instance):
         gui_instance.stop_event.clear()
         gui_instance.processing_start_time = time.time()
         
+        # Get categories and keywords
+        categories = [c.strip() for c in gui_instance.categories_entry.get().split(',') if c.strip()]
+        keywords = [k.strip() for k in gui_instance.keywords_entry.get().split(',') if k.strip()]
+
+        # Determine target worker
+        if gui_instance.processing_mode == "local":
+            image_files = scan_image_directory(gui_instance.image_dir)
+            target_worker = gui_workers.process_images_worker
+            worker_args = (gui_instance, image_files, categories, keywords)
+        else: # daminion
+            target_worker = gui_workers.process_daminion_worker
+            worker_args = (gui_instance, categories, keywords)
+
         # Start processing in worker thread
-        import threading
         thread = threading.Thread(
-            target=_start_processing_worker,
-            args=(gui_instance,),
+            target=target_worker,
+            args=worker_args,
             daemon=True
         )
         thread.start()
@@ -693,102 +600,7 @@ def on_start_processing(gui_instance):
         logging.error(f"Failed to start processing: {e}")
 
 
-def _start_processing_worker(gui_instance):
-    """Worker function for image processing with granular progress tracking."""
-    try:
-        from enhanced_progress import set_progress_stage, ProgressStage, get_progress_tracker
-        
-        # Start enhanced progress tracking
-        tracker = get_progress_tracker()
-        tracker.start_tracking(total_items=100)  # Assuming 100 images for demo
-        
-        set_progress_stage(ProgressStage.INITIALIZING, sub_stage="Starting image processing")
-        
-        # Simulate realistic image processing with granular sub-stages
-        total_images = 100
-        sub_stages = [
-            "downloading_thumbnail",
-            "loading_image", 
-            "ai_inference",
-            "extracting_results",
-            "updating_metadata"
-        ]
-        
-        for i in range(total_images):
-            if gui_instance.stop_event.is_set():
-                set_progress_stage(ProgressStage.ERROR, sub_stage="Processing stopped by user")
-                break
-            
-            # Update main progress
-            tracker.update_processing_progress(i + 1)
-            
-            # Simulate each sub-stage with progress updates
-            for sub_stage_idx, sub_stage in enumerate(sub_stages):
-                if gui_instance.stop_event.is_set():
-                    break
-                
-                # Update sub-stage progress
-                set_progress_stage(ProgressStage.PROCESSING_IMAGES, sub_stage=sub_stage.replace('_', ' ').title())
-                tracker.update_processing_progress(i + 1, sub_stage, 0.0)
-                
-                # Simulate sub-stage completion with progress updates
-                for sub_progress in range(0, 101, 10):  # 0%, 10%, 20%, ..., 100%
-                    if gui_instance.stop_event.is_set():
-                        break
-                    
-                    tracker.update_processing_progress(i + 1, sub_stage, float(sub_progress))
-                    
-                    # Send granular progress update to GUI
-                    gui_instance.q.put({
-                        'type': 'progress',
-                        'progress': (i + (sub_stage_idx + sub_progress/100.0) / len(sub_stages)) / total_images,
-                        'current': i + 1,
-                        'total': total_images,
-                        'current_image': f"image_{i+1:03d}.jpg",
-                        'sub_stage': sub_stage,
-                        'sub_stage_progress': sub_progress
-                    })
-                    
-                    # Simulate realistic timing for different sub-stages
-                    if sub_stage == "ai_inference":
-                        time.sleep(0.05)  # Longer for AI processing
-                    elif sub_stage == "downloading_thumbnail":
-                        time.sleep(0.02)  # Medium for downloads
-                    else:
-                        time.sleep(0.01)  # Quick for other operations
-                
-                if gui_instance.stop_event.is_set():
-                    break
-            
-            # Mark current image as complete
-            set_progress_stage(ProgressStage.COMPLETE, sub_stage=f"Completed {i+1}/{total_images} images")
-            
-            # Send update for completed image
-            gui_instance.q.put({
-                'type': 'status_update',
-                'status': f'Completed image {i+1}/{total_images}: image_{i+1:03d}.jpg'
-            })
-        
-        if not gui_instance.stop_event.is_set():
-            # Mark processing as complete
-            tracker.mark_complete()
-            set_progress_stage(ProgressStage.COMPLETE, sub_stage="All images processed successfully!")
-            
-            gui_instance.q.put({
-                'type': 'progress_done',
-                'processed_count': total_images,
-                'error_count': 0
-            })
-        
-    except Exception as e:
-        logging.error(f"Processing error: {e}")
-        from enhanced_progress import get_progress_tracker
-        get_progress_tracker().mark_error(str(e))
-        
-        gui_instance.q.put({
-            'type': 'error',
-            'error': str(e)
-        })
+
 
 
 def on_stop_processing(gui_instance):

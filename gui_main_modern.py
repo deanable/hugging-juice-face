@@ -268,8 +268,8 @@ class ModernImageTaggerGUI(ctk.CTk):
 
     def _on_models_found(self, message):
         """Handle models found message."""
-        models = message.get('models', [])
-        gui_handlers.update_model_list(self, models)
+        models, downloaded_models = message.get('models', ([], []))
+        gui_handlers.update_model_list(self, models, downloaded_models)
 
     def _on_model_loaded(self, message):
         """Handle model loaded message."""
@@ -389,7 +389,8 @@ class ModernImageTaggerGUI(ctk.CTk):
 
     def _on_daminion_connected(self, message):
         """Handle Daminion connection message."""
-        item_count = message.get('item_count', 0)
+        status = message.get('status', {})
+        item_count = status.get('item_count', 0)
         self.status_label.configure(text=f"✅ Connected to Daminion: {item_count} items")
         logging.info(f"Daminion connected: {item_count} items available")
 
