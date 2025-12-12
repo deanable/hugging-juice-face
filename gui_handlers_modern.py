@@ -268,7 +268,13 @@ def on_model_task_change(gui_instance, event=None):
     """
     update_task_description(gui_instance)
     update_step_states(gui_instance)
-    
+
+    # Re-scan for cached models when task changes
+    try:
+        gui_instance.after(0, lambda: scan_local_models(gui_instance))
+    except Exception as e:
+        logging.error(f"Failed to rescan for cached models after task change: {e}")
+
     try:
         task = gui_instance.model_task.get()
         logging.info(f"Model task changed to: {task}")
@@ -509,27 +515,46 @@ def _find_models_worker(gui_instance):
 
 
 def _update_model_list(gui_instance, models):
-    """Update the model list display."""
+    """Update the model list display with cached models prioritized."""
     try:
         from huggingface_utils import is_model_downloaded
 
         # Clear existing models
         for widget in gui_instance.model_listbox.winfo_children():
             widget.destroy()
-        
-        # Add new models
-        gui_instance.all_models = set()
+
+        # Separate cached and cloud models, prioritize cached ones
+        cached_models = []
+        cloud_models = []
+
         for model in models:
             model_id = model['id']
             gui_instance.all_models.add(model_id)
-            
+
+            if is_model_downloaded(model_id):
+                cached_models.append(model)
+            else:
+                cloud_models.append(model)
+
+        # Add models in priority order: cached first, then cloud
+        all_models_to_show = cached_models + cloud_models
+
+        # Auto-select first cached model if available, otherwise first model
+        auto_select_model = None
+
+        for model in all_models_to_show:
+            model_id = model['id']
             model_frame = ctk.CTkFrame(gui_instance.model_listbox)
             model_frame.pack(fill="x", padx=5, pady=5)
-            
+
             # Check if model is cached
             is_cached = is_model_downloaded(model_id)
             cached_text = "✅ Cached" if is_cached else "☁️ Cloud"
             cached_color = "green" if is_cached else ("gray", "gray")
+
+            # Auto-select first cached model
+            if is_cached and not auto_select_model:
+                auto_select_model = model_id
 
             # Radio button for selection
             radio_args = {
@@ -539,8 +564,7 @@ def _update_model_list(gui_instance, models):
                 "font": ctk.CTkFont(weight="bold")
             }
 
-            # Only set text_color for cached items to highlight them,
-            # otherwise let CTk handle default theme colors (black/white)
+            # Highlight cached items in green
             if is_cached:
                 radio_args["text_color"] = cached_color
 
@@ -554,23 +578,45 @@ def _update_model_list(gui_instance, models):
                 downloads = model.get('downloads', 0)
                 likes = model.get('likes', 0)
                 description = f"Downloads: {downloads} | Likes: {likes}"
-            
+
+            # Add special description for cached models
+            if is_cached:
+                description = f"✨ {description} - Ready to use!"
+
             desc_label = ctk.CTkLabel(
                 model_frame,
                 text=description,
                 font=ctk.CTkFont(size=11),
-                text_color="gray",
+                text_color="green" if is_cached else "gray",
                 anchor="w",
                 wraplength=400
             )
             desc_label.pack(fill="x", padx=35, pady=(0, 10))
-        
-        # Re-enable search button
-        gui_instance.find_models_button.configure(state="normal", text="🔍 Find Models")
-        gui_instance.load_model_button.configure(state="normal")
-        
-        logging.info(f"Found {len(models)} models")
-        
+
+        # Auto-select the first available model (preferring cached ones)
+        if auto_select_model:
+            gui_instance.selected_model_var.set(auto_select_model)
+            gui_instance.load_model_button.configure(state="normal")
+
+        # Update button text and status
+        if cached_models:
+            gui_instance.find_models_button.configure(
+                state="normal",
+                text=f"🔍 Find More Models ({len(cloud_models)} cloud)"
+            )
+            gui_instance.q.put({
+                'type': 'status_update',
+                'status': f'🚀 {len(cached_models)} cached models ready + {len(cloud_models)} cloud models available'
+            })
+        else:
+            gui_instance.find_models_button.configure(state="normal", text="🔍 Find Models")
+            gui_instance.q.put({
+                'type': 'status_update',
+                'status': f'Found {len(models)} models - none cached yet'
+            })
+
+        logging.info(f"Found {len(models)} models ({len(cached_models)} cached, {len(cloud_models)} cloud)")
+
     except Exception as e:
         logging.error(f"Failed to update model list: {e}")
 
@@ -883,13 +929,77 @@ def show_report_summary(gui_instance):
     )
 
 
+def _populate_with_cached_models(gui_instance, cached_models):
+    """Populate the model list UI with cached models."""
+    try:
+        # Clear existing models
+        for widget in gui_instance.model_listbox.winfo_children():
+            widget.destroy()
+
+        # Add cached models to UI
+        gui_instance.all_models = set(cached_models)
+        
+        # Sort cached models alphabetically for better UX
+        sorted_cached_models = sorted(cached_models)
+        
+        for model_id in sorted_cached_models:
+            model_frame = ctk.CTkFrame(gui_instance.model_listbox)
+            model_frame.pack(fill="x", padx=5, pady=5)
+
+            # Radio button for cached model with green highlight
+            radio_btn = ctk.CTkRadioButton(
+                model_frame,
+                text=f"{model_id}   [✅ Cached]",
+                variable=gui_instance.selected_model_var,
+                value=model_id,
+                font=ctk.CTkFont(weight="bold"),
+                text_color="green"
+            )
+            radio_btn.pack(anchor="w", padx=10, pady=(10, 5))
+
+            # Description for cached model
+            desc_label = ctk.CTkLabel(
+                model_frame,
+                text="✨ Ready to use - no download required",
+                font=ctk.CTkFont(size=11),
+                text_color="green"
+            )
+            desc_label.pack(anchor="w", padx=10, pady=(0, 10))
+
+        # Auto-select the first cached model if available
+        if sorted_cached_models:
+            first_model = sorted_cached_models[0]
+            gui_instance.selected_model_var.set(first_model)
+            gui_instance.load_model_button.configure(state="normal")
+            
+            # Update status
+            gui_instance.q.put({
+                'type': 'status_update',
+                'status': f'🚀 Found {len(cached_models)} cached models for {gui_instance.model_task.get()}'
+            })
+            
+            logging.info(f"UI populated with {len(cached_models)} cached models")
+        
+        # Update button text to reflect cached models
+        if hasattr(gui_instance, 'find_models_button') and gui_instance.find_models_button:
+            gui_instance.find_models_button.configure(text="🔍 Find More Models")
+            
+    except Exception as e:
+        logging.error(f"Failed to populate cached models in UI: {e}")
+
+
 def scan_local_models(gui_instance):
-    """Scan for locally available models."""
+    """Scan for locally available models and populate UI with them."""
     try:
         import huggingface_utils
         task = gui_instance.model_task.get()
         local_models = huggingface_utils.find_local_models_by_task(task)
         gui_instance.downloaded_models = set(local_models)
         logging.info(f"Found {len(local_models)} local models")
+        
+        # If we found local models, populate the UI immediately
+        if local_models:
+            gui_instance.after(0, lambda: _populate_with_cached_models(gui_instance, local_models))
+            
     except Exception as e:
         logging.error(f"Local model scan error: {e}")
