@@ -91,6 +91,7 @@ class ModernImageTaggerGUI(ctk.CTk):
         self.model_progress_bar: Optional[ctk.CTkProgressBar] = None
         self.model_progress_label: Optional[ctk.CTkLabel] = None
         self.daminion_collections: List[Dict] = []
+        self.selected_model_var: Optional[ctk.StringVar] = None
         
         # Theme toggle button
         self.theme_button: Optional[ctk.CTkButton] = None
@@ -325,6 +326,8 @@ class ModernImageTaggerGUI(ctk.CTk):
              self._on_daminion_connected(data)
         elif message_type == 'daminion_collections':
              self._on_daminion_collections(data)
+        elif message_type == 'models_found':
+             self._on_models_found(data)
         elif message_type == 'progress_done':
              if not isinstance(data, dict):
                  data = {'processed_count': 0, 'error_count': 0}
@@ -476,6 +479,46 @@ class ModernImageTaggerGUI(ctk.CTk):
             
             if self.refresh_collections_btn:
                 self.refresh_collections_btn.configure(state="normal")
+
+    def _on_models_found(self, data):
+        """Handle models found message."""
+        model_ids, downloaded = data
+        self.all_models.update(model_ids)
+        self.downloaded_models.update(downloaded)
+        
+        if self.model_listbox:
+            # Clear existing
+            for widget in self.model_listbox.winfo_children():
+                widget.destroy()
+            
+            # Sort models
+            sorted_models = sorted(list(self.all_models), key=lambda x: (x not in self.downloaded_models, x))
+            
+            for model_id in sorted_models:
+                model_frame = ctk.CTkFrame(self.model_listbox)
+                model_frame.pack(fill="x", padx=5, pady=5)
+                
+                is_cached = model_id in self.downloaded_models
+                cached_text = "✅ Cached" if is_cached else "☁️ Cloud"
+                cached_color = "green" if is_cached else ("gray", "gray")
+                
+                radio_args = {
+                    "text": f"{model_id}   [{cached_text}]",
+                    "variable": self.selected_model_var,
+                    "value": model_id,
+                    "font": ctk.CTkFont(weight="bold")
+                }
+                if is_cached:
+                    radio_args["text_color"] = cached_color
+                
+                radio_btn = ctk.CTkRadioButton(model_frame, **radio_args)
+                radio_btn.pack(anchor="w", padx=10, pady=(10, 5))
+        
+        if self.find_models_button:
+            self.find_models_button.configure(state="normal", text="🔍 Find Models")
+            
+        if self.status_label:
+            self.status_label.configure(text=f"Found {len(self.all_models)} models")
 
     def _on_processing_done(self, message):
         """Handle processing completion message."""
