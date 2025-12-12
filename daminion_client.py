@@ -332,12 +332,20 @@ class DaminionClient:
         endpoint = f"/api/SharedCollection/GetCollections?index={index}&pageSize={page_size}"
         try:
             response = self._make_request(endpoint)
-            # response shape may vary; try common keys
-            collections = response.get('collections') or response.get('items') or response.get('data') or response
-            if isinstance(collections, dict):
-                # sometimes API wraps in data/results
-                return list(collections.values())
-            return collections if isinstance(collections, list) else []
+            # response shape may vary; handle both dict and list responses
+            if isinstance(response, list):
+                # response is already a list
+                return response
+            elif isinstance(response, dict):
+                # response is a dict, try common keys
+                collections = response.get('collections') or response.get('items') or response.get('data')
+                if isinstance(collections, dict):
+                    # sometimes API wraps in data/results
+                    return list(collections.values())
+                return collections if isinstance(collections, list) else []
+            else:
+                # unexpected response type
+                return []
         except Exception as e:
             logging.exception("Failed to fetch shared collections")
             return []
