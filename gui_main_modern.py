@@ -105,7 +105,7 @@ class ModernImageTaggerGUI(ctk.CTk):
             pass
 
         self.after(100, self.process_queue)
-        self.after(200, self.on_find_models)  # Find models on startup
+        self.after(200, self.scan_local_models)  # Scan for local models on startup
         logging.info("Modern GUI initialized with step-by-step workflow.")
 
     def _create_menu(self):
@@ -173,10 +173,23 @@ class ModernImageTaggerGUI(ctk.CTk):
         
         # Setup enhanced progress monitoring
         setup_enhanced_progress_monitoring(self, self.enhanced_progress_display)
+        
+        # Add legacy progress section to ensure status_label and other widgets exist
+        gui_steps.create_progress_section(main_container, self)
+        
+        # Hide legacy progress widgets that are duplicated by enhanced progress display
+        if self.progress_bar:
+            self.progress_bar.pack_forget()
+        if self.progress_label:
+            self.progress_label.pack_forget()
+        if self.time_label:
+            self.time_label.pack_forget()
 
     def _toggle_theme(self):
         """Toggle between light and dark mode."""
         current_mode = ctk.get_appearance_mode()
+        if self.theme_button is None:
+            return
         if current_mode == "Light":
             ctk.set_appearance_mode("dark")
             self.theme_button.configure(text="☀️ Light Mode")
@@ -231,6 +244,18 @@ class ModernImageTaggerGUI(ctk.CTk):
     def show_report_summary(self):
         gui_handlers.show_report_summary(self)
 
+    def scan_local_models(self):
+        """Scan for locally cached models."""
+        try:
+            cache_dir = Path(config.HF_CACHE_DIR)
+            if cache_dir.exists():
+                models = [d.name for d in cache_dir.iterdir() if d.is_dir()]
+                self.all_models.update(models)
+                self.downloaded_models.update(models)
+                logging.info(f"Found {len(models)} local models")
+        except Exception as e:
+            logging.error(f"Error scanning local models: {e}")
+
     # Queue processing
     def process_queue(self):
         """Process messages from worker threads."""
@@ -245,36 +270,73 @@ class ModernImageTaggerGUI(ctk.CTk):
 
     def _handle_message(self, message):
         """Handle messages from worker threads."""
-        message_type = message.get('type', 'unknown')
+        # Normalize message to (type, data)
+        if isinstance(message, dict):
+            message_type = message.get('type', 'unknown')
+            data = message
+        elif isinstance(message, tuple) and len(message) == 2:
+            message_type, data = message
+        else:
+            logging.warning(f"Unknown message format: {type(message)}")
+            return
         
         if message_type == 'model_loaded':
-            self._on_model_loaded(message)
+            # Normalize data for _on_model_loaded
+            if not isinstance(data, dict) or 'model' not in data:
+                 model_name = 'Unknown'
+                 # Check if data is an object with a 'model' attribute (pipeline)
+                 if not isinstance(data, dict) and hasattr(data, 'model'):
+                     model_name = getattr(data.model, 'name_or_path', 'Unknown Model')
+                 
+                 data = {'model': data, 'model_name': model_name}
+            self._on_model_loaded(data)
         elif message_type == 'model_download_progress':
-            self._on_model_download_progress(message)
+            if not isinstance(data, dict):
+                current, total = data
+                data = {
+                    'progress': (current/total) if total else 0,
+                    'bytes_downloaded': current,
+                    'total_bytes': total,
+                    'status': f"Downloading..."
+                }
+            self._on_model_download_progress(data)
         elif message_type == 'progress':
-            self._on_progress_update(message)
+            if not isinstance(data, dict):
+                 data = {'progress': 0, 'current': data, 'total': 0} 
+            self._on_progress_update(data)
+        elif message_type == 'progress_max':
+             tracker = get_progress_tracker()
+             if isinstance(data, dict):
+                 val = data.get('total', data.get('value', 0))
+             else:
+                 val = data
+             tracker.total_items = int(val) if val else 0
         elif message_type == 'status_update':
-            self._on_status_update(message)
+             if not isinstance(data, dict):
+                 data = {'status': data}
+             self._on_status_update(data)
         elif message_type == 'error':
-            self._on_error(message)
+             if not isinstance(data, dict):
+                 data = {'error': str(data)}
+             self._on_error(data)
         elif message_type == 'daminion_connected':
-            self._on_daminion_connected(message)
+             if not isinstance(data, dict) or 'item_count' not in data:
+                 data = {'item_count': data.get('total_items', 0)}
+             self._on_daminion_connected(data)
+        elif message_type == 'daminion_collections':
+             self._on_daminion_collections(data)
         elif message_type == 'progress_done':
-            self._on_processing_done(message)
-        elif message_type == 'models_found':
-            self._on_models_found(message)
+             if not isinstance(data, dict):
+                 data = {'processed_count': 0, 'error_count': 0}
+             self._on_processing_done(data)
         else:
             logging.warning(f"Unknown message type: {message_type}")
-
-    def _on_models_found(self, message):
-        """Handle models found message."""
-        models, downloaded_models = message.get('models', ([], []))
-        gui_handlers.update_model_list(self, models, downloaded_models)
 
     def _on_model_loaded(self, message):
         """Handle model loaded message."""
         self.model = message['model']
-        self.status_label.configure(text=f"✅ Model loaded: {message['model_name']}")
+        if self.status_label:
+            self.status_label.configure(text=f"✅ Model loaded: {message['model_name']}")
         logging.info(f"Model loaded successfully: {message['model_name']}")
 
     def _on_model_download_progress(self, message):
@@ -309,6 +371,9 @@ class ModernImageTaggerGUI(ctk.CTk):
         tracker = get_progress_tracker()
         tracker.update_processing_progress(current, sub_stage, sub_stage_progress)
         
+        if total == 0 and tracker.total_items > 0:
+            total = tracker.total_items
+            
         # Update legacy UI elements if they exist
         if self.progress_bar:
             self.progress_bar.set(progress)
@@ -389,19 +454,39 @@ class ModernImageTaggerGUI(ctk.CTk):
 
     def _on_daminion_connected(self, message):
         """Handle Daminion connection message."""
-        status = message.get('status', {})
-        item_count = status.get('item_count', 0)
-        self.status_label.configure(text=f"✅ Connected to Daminion: {item_count} items")
+        item_count = message.get('item_count', 0)
+        if self.status_label:
+            self.status_label.configure(text=f"✅ Connected to Daminion: {item_count} items")
         logging.info(f"Daminion connected: {item_count} items available")
+
+    def _on_daminion_collections(self, collections):
+        """Handle Daminion collections update."""
+        self.daminion_collections = collections
+        if self.daminion_collection_combo:
+            names = []
+            for c in collections:
+                if isinstance(c, dict):
+                    title = c.get('name') or c.get('title') or c.get('code') or str(c.get('id') or '')
+                    idx = c.get('id') or c.get('code') or c.get('collectionId') or ''
+                    names.append(f"{title} ({idx})" if idx else title)
+            
+            self.daminion_collection_combo.configure(values=names)
+            if names:
+                self.daminion_collection_combo.set(names[0])
+            
+            if self.refresh_collections_btn:
+                self.refresh_collections_btn.configure(state="normal")
 
     def _on_processing_done(self, message):
         """Handle processing completion message."""
-        total_time = time.time() - self.processing_start_time
+        start_time = self.processing_start_time or time.time()
+        total_time = time.time() - start_time
         processed_count = message.get('processed_count', 0)
         error_count = message.get('error_count', 0)
         
         # Reset UI state
-        self.start_button.configure(text="Start Processing", command=self.on_start_processing)
+        if self.start_button:
+            self.start_button.configure(text="Start Processing", command=self.on_start_processing)
         self.stop_event.clear()
         self.processing_start_time = None
         
