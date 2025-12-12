@@ -34,7 +34,13 @@ class TqdmToQueue(tqdm):
         with TqdmToQueue._lock:
             TqdmToQueue._overall_downloaded_bytes += n
             if TqdmToQueue._q and TqdmToQueue._update_type:
-                TqdmToQueue._q.put((TqdmToQueue._update_type, (TqdmToQueue._overall_downloaded_bytes, TqdmToQueue._overall_total_size)))
+                TqdmToQueue._q.put({
+                    "type": "model_download_progress",
+                    "progress": TqdmToQueue._overall_downloaded_bytes / TqdmToQueue._overall_total_size if TqdmToQueue._overall_total_size > 0 else 0,
+                    "bytes_downloaded": TqdmToQueue._overall_downloaded_bytes,
+                    "total_bytes": TqdmToQueue._overall_total_size,
+                    "status": f"Downloaded {TqdmToQueue._overall_downloaded_bytes / (1024*1024):.1f}MB of {TqdmToQueue._overall_total_size / (1024*1024):.1f}MB"
+                })
 
     @classmethod
     def get_lock(cls):
@@ -328,7 +334,82 @@ def load_model_with_progress(model_id, task, q):
             # If we can't inspect the config for any reason, proceed to let pipeline raise a clear error.
             pass
         
-        model = pipeline(task, model=local_model_path)
+        try:
+            # For Vision-Language models (like Qwen2.5-VL), we need special handling
+            if "qwen2.5-vl" in model_id.lower() or "qwen-vl" in model_id.lower():
+                logging.info(f"Detected Vision-Language model: {model_id}, using special loading approach")
+                
+                # Import necessary components for VL models
+                from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
+                from PIL import Image
+                import torch
+                
+                # Load processor and model separately for VL models
+                processor = AutoProcessor.from_pretrained(local_model_path, trust_remote_code=True)
+                model = Qwen2VLForConditionalGeneration.from_pretrained(
+                    local_model_path, 
+                    torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+                    device_map="auto" if torch.cuda.is_available() else None,
+                    trust_remote_code=True
+                )
+                
+                # Wrap in a pipeline-like interface
+                class VLPipeline:
+                    def __init__(self, model, processor, task):
+                        self.model = model
+                        self.processor = processor
+                        self.task = task
+                        
+                    def __call__(self, image, **kwargs):
+                        """Process image and return results in pipeline format."""
+                        if isinstance(image, str):
+                            image = Image.open(image)
+                        
+                        # Prepare inputs
+                        messages = [
+                            {
+                                "role": "user",
+                                "content": [
+                                    {"type": "image", "image": image},
+                                    {"type": "text", "text": kwargs.get('prompt', "Describe the image.")}
+                                ]
+                            }
+                        ]
+                        
+                        # Apply chat template
+                        text = self.processor.apply_chat_template(
+                            messages, tokenize=False, add_generation_prompt=True
+                        )
+                        
+                        # Process inputs
+                        image_inputs = self.processor(
+                            images=[image], 
+                            videos=None, 
+                            text=[text], 
+                            padding=True, 
+                            return_tensors="pt"
+                        )
+                        
+                        # Generate
+                        outputs = self.model.generate(**image_inputs, max_new_tokens=200)
+                        generated_text = self.processor.batch_decode(outputs, skip_special_tokens=True)[0]
+                        
+                        # Parse response
+                        parsed_response = generated_text.split("<|im_start|>assistant<|im_start|>")[-1].strip()
+                        return [[{"generated_text": parsed_response}]]
+                
+                model = VLPipeline(model, processor, task)
+                
+            else:
+                # Standard pipeline loading for other models
+                model = pipeline(task, model=local_model_path)
+                
+        except ImportError as e:
+            logging.warning(f"VL model components not available, falling back to standard pipeline: {e}")
+            model = pipeline(task, model=local_model_path)
+        except Exception as e:
+            logging.warning(f"VL model loading failed, falling back to standard pipeline: {e}")
+            model = pipeline(task, model=local_model_path)
         
         if has_enhanced_progress:
             set_progress_stage(ProgressStage.COMPLETE, sub_stage="Model loaded successfully")
