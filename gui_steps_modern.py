@@ -109,7 +109,7 @@ def create_step1_source(parent, gui_instance):
     )
     daminion_label.pack(anchor="w", padx=20, pady=(15, 10))
 
-    # Connection form
+    # Connection form (using grid-like layout for better responsiveness)
     conn_frame = ctk.CTkFrame(gui_instance.daminion_section, fg_color="transparent")
     conn_frame.pack(fill="x", padx=40, pady=(0, 15))
 
@@ -117,13 +117,12 @@ def create_step1_source(parent, gui_instance):
     url_frame = ctk.CTkFrame(conn_frame, fg_color="transparent")
     url_frame.pack(fill="x", pady=5)
 
-    ctk.CTkLabel(url_frame, text="Server URL:", width=120).pack(side="left")
+    ctk.CTkLabel(url_frame, text="Server URL:", width=120, anchor="w").pack(side="left")
     gui_instance.daminion_url_entry = ctk.CTkEntry(
         url_frame,
-        placeholder_text="https://interiors.daminion.net",
-        width=300
+        placeholder_text="https://interiors.daminion.net"
     )
-    gui_instance.daminion_url_entry.pack(side="left", padx=(10, 0))
+    gui_instance.daminion_url_entry.pack(side="left", padx=(10, 0), fill="x", expand=True)
     gui_instance.daminion_url_entry.insert(
         0, str(gui_instance.config_manager.get('daminion_url', 'https://interiors.daminion.net'))
     )
@@ -132,13 +131,12 @@ def create_step1_source(parent, gui_instance):
     user_frame = ctk.CTkFrame(conn_frame, fg_color="transparent")
     user_frame.pack(fill="x", pady=5)
 
-    ctk.CTkLabel(user_frame, text="Username:", width=120).pack(side="left")
+    ctk.CTkLabel(user_frame, text="Username:", width=120, anchor="w").pack(side="left")
     gui_instance.daminion_username_entry = ctk.CTkEntry(
         user_frame,
-        placeholder_text="Enter username",
-        width=300
+        placeholder_text="Enter username"
     )
-    gui_instance.daminion_username_entry.pack(side="left", padx=(10, 0))
+    gui_instance.daminion_username_entry.pack(side="left", padx=(10, 0), fill="x", expand=True)
     gui_instance.daminion_username_entry.insert(
         0, str(gui_instance.config_manager.get('daminion_username', ''))
     )
@@ -147,14 +145,13 @@ def create_step1_source(parent, gui_instance):
     pass_frame = ctk.CTkFrame(conn_frame, fg_color="transparent")
     pass_frame.pack(fill="x", pady=5)
 
-    ctk.CTkLabel(pass_frame, text="Password:", width=120).pack(side="left")
+    ctk.CTkLabel(pass_frame, text="Password:", width=120, anchor="w").pack(side="left")
     gui_instance.daminion_password_entry = ctk.CTkEntry(
         pass_frame,
         placeholder_text="Enter password",
-        show="*",
-        width=300
+        show="*"
     )
-    gui_instance.daminion_password_entry.pack(side="left", padx=(10, 0))
+    gui_instance.daminion_password_entry.pack(side="left", padx=(10, 0), fill="x", expand=True)
 
     # Connect button and status
     connect_frame = ctk.CTkFrame(gui_instance.daminion_section, fg_color="transparent")
@@ -220,17 +217,16 @@ def create_step2_model(parent, gui_instance):
     task_frame = ctk.CTkFrame(task_section, fg_color="transparent")
     task_frame.pack(fill="x", padx=40, pady=(0, 15))
 
-    ctk.CTkLabel(task_frame, text="Analysis Type:", width=120).pack(side="left")
+    ctk.CTkLabel(task_frame, text="Analysis Type:", width=120, anchor="w").pack(side="left")
     gui_instance.model_task = ctk.CTkOptionMenu(
         task_frame,
         values=[
             config.MODEL_TASK_IMAGE_CLASSIFICATION,
             config.MODEL_TASK_ZERO_SHOT,
             config.MODEL_TASK_IMAGE_TO_TEXT
-        ],
-        width=300
+        ]
     )
-    gui_instance.model_task.pack(side="left", padx=(10, 0))
+    gui_instance.model_task.pack(side="left", padx=(10, 0), fill="x", expand=True)
 
     # Set default task
     last_task = gui_instance.config_manager.get('last_model_task', config.MODEL_TASK_IMAGE_CLASSIFICATION)
@@ -381,13 +377,12 @@ def create_step3_config(parent, gui_instance):
     cat_frame = ctk.CTkFrame(cat_section, fg_color="transparent")
     cat_frame.pack(fill="x", padx=40, pady=(0, 15))
 
-    ctk.CTkLabel(cat_frame, text="Categories:", width=120).pack(side="left")
+    ctk.CTkLabel(cat_frame, text="Categories:", width=120, anchor="w").pack(side="left")
     gui_instance.categories_entry = ctk.CTkEntry(
         cat_frame,
-        placeholder_text="e.g., Scenery, Portrait, Document (comma-separated)",
-        width=400
+        placeholder_text="e.g., Scenery, Portrait, Document (comma-separated)"
     )
-    gui_instance.categories_entry.pack(side="left", padx=(10, 0))
+    gui_instance.categories_entry.pack(side="left", padx=(10, 0), fill="x", expand=True)
 
     default_cats = gui_instance.config_manager.get('default_categories', 'Scenery, Portrait, Document')
     gui_instance.categories_entry.insert(0, default_cats)
@@ -406,13 +401,12 @@ def create_step3_config(parent, gui_instance):
     kw_frame = ctk.CTkFrame(kw_section, fg_color="transparent")
     kw_frame.pack(fill="x", padx=40, pady=(0, 15))
 
-    ctk.CTkLabel(kw_frame, text="Keywords:", width=120).pack(side="left")
+    ctk.CTkLabel(kw_frame, text="Keywords:", width=120, anchor="w").pack(side="left")
     gui_instance.keywords_entry = ctk.CTkEntry(
         kw_frame,
-        placeholder_text="e.g., sunset, beach, car, dog (comma-separated)",
-        width=400
+        placeholder_text="e.g., sunset, beach, car, dog (comma-separated)"
     )
-    gui_instance.keywords_entry.pack(side="left", padx=(10, 0))
+    gui_instance.keywords_entry.pack(side="left", padx=(10, 0), fill="x", expand=True)
 
     default_kw = gui_instance.config_manager.get('default_keywords', 'sunset, beach, car, dog')
     gui_instance.keywords_entry.insert(0, default_kw)
@@ -428,45 +422,51 @@ def create_step3_config(parent, gui_instance):
     )
     scope_label.pack(anchor="w", padx=20, pady=(15, 10))
 
-    scope_frame = ctk.CTkFrame(scope_section, fg_color="transparent")
-    scope_frame.pack(fill="x", padx=40, pady=(0, 15))
+    # Row 1: Scope dropdown (full width)
+    scope_row1 = ctk.CTkFrame(scope_section, fg_color="transparent")
+    scope_row1.pack(fill="x", padx=40, pady=(0, 10))
 
-    ctk.CTkLabel(scope_frame, text="Scope:", width=120).pack(side="left")
+    ctk.CTkLabel(scope_row1, text="Scope:", width=120).pack(side="left")
     gui_instance.scope_var = ctk.CTkOptionMenu(
-        scope_frame,
+        scope_row1,
         values=["All Items", "Flagged Items", "Untagged Items", "Custom Collection"],
-        width=200
+        width=400
     )
-    gui_instance.scope_var.pack(side="left", padx=(10, 0))
+    gui_instance.scope_var.pack(side="left", padx=(10, 0), fill="x", expand=True)
     gui_instance.scope_var.set("All Items")
     gui_instance.scope_var.configure(command=gui_instance.on_scope_change)
 
-    # Collection path (for custom collections)
-    gui_instance.collection_path = ctk.CTkEntry(
-        scope_frame,
-        placeholder_text="Collection name or path",
-        width=200
-    )
-    gui_instance.collection_path.pack(side="left", padx=(10, 0))
+    # Row 2: Collection path (for custom collections) - will be shown/hidden dynamically
+    gui_instance.collection_path_frame = ctk.CTkFrame(scope_section, fg_color="transparent")
 
-    # Collections button (for Daminion)
+    ctk.CTkLabel(gui_instance.collection_path_frame, text="Collection Path:", width=120).pack(side="left")
+    gui_instance.collection_path = ctk.CTkEntry(
+        gui_instance.collection_path_frame,
+        placeholder_text="Enter collection name or path",
+        width=400
+    )
+    gui_instance.collection_path.pack(side="left", padx=(10, 0), fill="x", expand=True)
+
+    # Row 3: Daminion collections dropdown with refresh button
+    gui_instance.daminion_collections_frame = ctk.CTkFrame(scope_section, fg_color="transparent")
+
+    ctk.CTkLabel(gui_instance.daminion_collections_frame, text="Select Collection:", width=120).pack(side="left")
+    gui_instance.daminion_collection_combo = ctk.CTkComboBox(
+        gui_instance.daminion_collections_frame,
+        values=["Select Collection"],
+        width=300,
+        state="readonly"
+    )
+    gui_instance.daminion_collection_combo.pack(side="left", padx=(10, 0), fill="x", expand=True)
+
     gui_instance.refresh_collections_btn = ctk.CTkButton(
-        scope_frame,
-        text="🔄 Refresh Collections",
+        gui_instance.daminion_collections_frame,
+        text="🔄 Refresh",
         command=gui_instance.on_refresh_collections,
-        width=140,
+        width=100,
         height=30
     )
     gui_instance.refresh_collections_btn.pack(side="left", padx=(10, 0))
-
-    # Collections dropdown (for Daminion)
-    gui_instance.daminion_collection_combo = ctk.CTkComboBox(
-        scope_frame,
-        values=["Select Collection"],
-        width=200,
-        state="readonly"
-    )
-    gui_instance.daminion_collection_combo.pack(side="left", padx=(10, 0))
 
     # Configuration summary
     config_section = ctk.CTkFrame(main_frame)

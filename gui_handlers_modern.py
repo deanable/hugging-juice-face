@@ -15,6 +15,21 @@ import config
 import customtkinter as ctk
 
 
+def _check_flagged_keywords(text):
+    """Check if text contains flagged keywords.
+
+    Args:
+        text: Text to check
+
+    Returns:
+        True if text contains flag/reject keywords
+    """
+    if not text:
+        return False
+    text_lower = str(text).lower()
+    return any(keyword in text_lower for keyword in ['flag', 'reject', 'rejected'])
+
+
 def filter_local_images(all_images, scope, collection_path=None):
     """Return a filtered list of local image Path objects according to scope.
 
@@ -33,12 +48,12 @@ def filter_local_images(all_images, scope, collection_path=None):
 
     if scope == 'flagged':
         def is_flagged(p):
-            name = p.name.lower()
-            if 'flag' in name or 'reject' in name or 'rejected' in name:
+            # Check filename
+            if _check_flagged_keywords(p.name):
                 return True
+            # Check parent directories
             for part in p.parents:
-                pn = part.name.lower()
-                if 'flag' in pn or 'reject' in pn or 'rejected' in pn:
+                if _check_flagged_keywords(part.name):
                     return True
             return False
 
@@ -66,14 +81,16 @@ def filter_daminion_items(items, scope, collection_name=None):
 
     if scope == 'flagged':
         def is_flagged_item(it):
-            fname = (it.get('fileName') or '').lower()
-            if any(tok in fname for tok in ['flag', 'reject', 'rejected']):
+            # Check filename
+            if _check_flagged_keywords(it.get('fileName')):
                 return True
+
+            # Check metadata fields
             for k in ('status', 'tags', 'keywords', 'description'):
                 v = it.get(k)
-                if isinstance(v, str) and any(tok in v.lower() for tok in ['flag', 'reject', 'rejected']):
+                if isinstance(v, str) and _check_flagged_keywords(v):
                     return True
-                if isinstance(v, list) and any(isinstance(x, str) and any(tok in x.lower() for tok in ['flag', 'reject', 'rejected']) for x in v):
+                if isinstance(v, list) and any(_check_flagged_keywords(x) for x in v if isinstance(x, str)):
                     return True
             return False
 
@@ -290,27 +307,37 @@ def on_mode_change(gui_instance, mode):
         mode: "local" or "daminion"
     """
     gui_instance.processing_mode = mode
-    
+
     # Show/hide appropriate sections
     if mode == "local":
         gui_instance.local_section.pack(fill="x", pady=(0, 20))
         gui_instance.daminion_section.pack_forget()
         gui_instance.scope_var.configure(values=["All Items"])
-        if hasattr(gui_instance, 'daminion_collection_combo'):
-            gui_instance.daminion_collection_combo.pack_forget()
-        if hasattr(gui_instance, 'refresh_collections_btn'):
-            gui_instance.refresh_collections_btn.pack_forget()
+
+        # Hide Daminion-specific frames
+        if hasattr(gui_instance, 'daminion_collections_frame'):
+            gui_instance.daminion_collections_frame.pack_forget()
+        else:
+            # Legacy support
+            if hasattr(gui_instance, 'daminion_collection_combo'):
+                gui_instance.daminion_collection_combo.pack_forget()
+            if hasattr(gui_instance, 'refresh_collections_btn'):
+                gui_instance.refresh_collections_btn.pack_forget()
     else:
         gui_instance.local_section.pack_forget()
         gui_instance.daminion_section.pack(fill="x", pady=(0, 20))
         gui_instance.scope_var.configure(values=["All Items", "Flagged Items", "Untagged Items", "Custom Collection"])
-        
-        # Show Daminion-specific controls
-        if hasattr(gui_instance, 'daminion_collection_combo'):
-            gui_instance.daminion_collection_combo.pack(side="left", padx=(10, 0))
-        if hasattr(gui_instance, 'refresh_collections_btn'):
-            gui_instance.refresh_collections_btn.pack(side="left", padx=(10, 0))
-    
+
+        # Show Daminion-specific frames
+        if hasattr(gui_instance, 'daminion_collections_frame'):
+            gui_instance.daminion_collections_frame.pack(fill="x", padx=40, pady=(0, 10))
+        else:
+            # Legacy support
+            if hasattr(gui_instance, 'daminion_collection_combo'):
+                gui_instance.daminion_collection_combo.pack(side="left", padx=(10, 0))
+            if hasattr(gui_instance, 'refresh_collections_btn'):
+                gui_instance.refresh_collections_btn.pack(side="left", padx=(10, 0))
+
     update_step_states(gui_instance)
 
 
@@ -323,18 +350,25 @@ def on_scope_change(gui_instance, event=None):
     """
     try:
         scope = gui_instance.scope_var.get()
-        
-        # Show/hide collection path based on scope
-        if scope == "Custom Collection":
-            gui_instance.collection_path.pack(side="left", padx=(10, 0))
+
+        # Show/hide collection path frame based on scope
+        if hasattr(gui_instance, 'collection_path_frame'):
+            if scope == "Custom Collection":
+                gui_instance.collection_path_frame.pack(fill="x", padx=40, pady=(0, 10))
+            else:
+                gui_instance.collection_path_frame.pack_forget()
         else:
-            gui_instance.collection_path.pack_forget()
-        
+            # Legacy support: fall back to individual widget
+            if scope == "Custom Collection":
+                gui_instance.collection_path.pack(side="left", padx=(10, 0))
+            else:
+                gui_instance.collection_path.pack_forget()
+
         # Update processing info
         if hasattr(gui_instance, 'processing_info_label'):
             info_text = f"Ready to process {scope.lower()} from {'Daminion' if gui_instance.processing_mode == 'daminion' else 'local directory'}"
             gui_instance.processing_info_label.configure(text=info_text)
-        
+
         update_step_states(gui_instance)
     except Exception as e:
         logging.warning(f"Could not handle scope change: {e}")

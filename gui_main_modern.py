@@ -269,9 +269,15 @@ class ModernImageTaggerGUI(ctk.CTk):
         finally:
             self.after(100, self.process_queue)
 
-    def _handle_message(self, message):
-        """Handle messages from worker threads."""
-        # Normalize message to (type, data)
+    def _normalize_message(self, message):
+        """Normalize message to standard format (type, data).
+
+        Args:
+            message: Message from worker thread (dict, tuple, or other)
+
+        Returns:
+            Tuple of (message_type, data_dict)
+        """
         if isinstance(message, dict):
             message_type = message.get('type', 'unknown')
             data = message
@@ -279,61 +285,66 @@ class ModernImageTaggerGUI(ctk.CTk):
             message_type, data = message
         else:
             logging.warning(f"Unknown message format: {type(message)}")
-            return
-        
-        if message_type == 'model_loaded':
-            # Normalize data for _on_model_loaded
-            if not isinstance(data, dict) or 'model' not in data:
-                 model_name = 'Unknown'
-                 # Check if data is an object with a 'model' attribute (pipeline)
-                 if not isinstance(data, dict) and hasattr(data, 'model'):
-                     model_name = getattr(data.model, 'name_or_path', 'Unknown Model')
-                 
-                 data = {'model': data, 'model_name': model_name}
-            self._on_model_loaded(data)
-        elif message_type == 'model_download_progress':
-            if not isinstance(data, dict):
-                current, total = data
-                data = {
-                    'progress': (current/total) if total else 0,
-                    'bytes_downloaded': current,
-                    'total_bytes': total,
-                    'status': f"Downloading..."
-                }
-            self._on_model_download_progress(data)
-        elif message_type == 'progress':
-            if not isinstance(data, dict):
-                 data = {'progress': 0, 'current': data, 'total': 0} 
-            self._on_progress_update(data)
-        elif message_type == 'progress_max':
-             tracker = get_progress_tracker()
-             if isinstance(data, dict):
-                 val = data.get('total', data.get('value', 0))
-             else:
-                 val = data
-             tracker.total_items = int(val) if val else 0
-        elif message_type == 'status_update':
-             if not isinstance(data, dict):
-                 data = {'status': data}
-             self._on_status_update(data)
-        elif message_type == 'error':
-             if not isinstance(data, dict):
-                 data = {'error': str(data)}
-             self._on_error(data)
-        elif message_type == 'daminion_connected':
-             if not isinstance(data, dict) or 'item_count' not in data:
-                 data = {'item_count': data.get('total_items', 0)}
-             self._on_daminion_connected(data)
-        elif message_type == 'daminion_collections':
-             self._on_daminion_collections(data)
-        elif message_type == 'models_found':
-             self._on_models_found(data)
-        elif message_type == 'progress_done':
-             if not isinstance(data, dict):
-                 data = {'processed_count': 0, 'error_count': 0}
-             self._on_processing_done(data)
+            return 'unknown', {}
+
+        return message_type, data
+
+    def _normalize_model_loaded_data(self, data):
+        """Normalize model_loaded message data."""
+        if isinstance(data, dict) and 'model' in data:
+            return data
+
+        model_name = 'Unknown'
+        if not isinstance(data, dict) and hasattr(data, 'model'):
+            model_name = getattr(data.model, 'name_or_path', 'Unknown Model')
+
+        return {'model': data, 'model_name': model_name}
+
+    def _normalize_download_progress_data(self, data):
+        """Normalize model_download_progress message data."""
+        if isinstance(data, dict):
+            return data
+
+        current, total = data
+        return {
+            'progress': (current / total) if total else 0,
+            'bytes_downloaded': current,
+            'total_bytes': total,
+            'status': "Downloading..."
+        }
+
+    def _handle_message(self, message):
+        """Handle messages from worker threads."""
+        message_type, data = self._normalize_message(message)
+
+        # Message handler dispatch table
+        handlers = {
+            'model_loaded': lambda d: self._on_model_loaded(self._normalize_model_loaded_data(d)),
+            'model_download_progress': lambda d: self._on_model_download_progress(self._normalize_download_progress_data(d)),
+            'progress': lambda d: self._on_progress_update(d if isinstance(d, dict) else {'progress': 0, 'current': d, 'total': 0}),
+            'progress_max': self._handle_progress_max,
+            'status_update': lambda d: self._on_status_update(d if isinstance(d, dict) else {'status': d}),
+            'error': lambda d: self._on_error(d if isinstance(d, dict) else {'error': str(d)}),
+            'daminion_connected': lambda d: self._on_daminion_connected(d if isinstance(d, dict) and 'item_count' in d else {'item_count': d.get('total_items', 0) if isinstance(d, dict) else 0}),
+            'daminion_collections': self._on_daminion_collections,
+            'models_found': self._on_models_found,
+            'progress_done': lambda d: self._on_processing_done(d if isinstance(d, dict) else {'processed_count': 0, 'error_count': 0})
+        }
+
+        handler = handlers.get(message_type)
+        if handler:
+            handler(data)
         else:
             logging.warning(f"Unknown message type: {message_type}")
+
+    def _handle_progress_max(self, data):
+        """Handle progress_max message."""
+        tracker = get_progress_tracker()
+        if isinstance(data, dict):
+            val = data.get('total', data.get('value', 0))
+        else:
+            val = data
+        tracker.total_items = int(val) if val else 0
 
     def _on_model_loaded(self, message):
         """Handle model loaded message."""
