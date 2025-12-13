@@ -372,6 +372,7 @@ class ModernImageTaggerGUI(ctk.CTk):
         if self.status_label:
             self.status_label.configure(text=f"✅ Model loaded: {message['model_name']}")
         logging.info(f"Model loaded successfully: {message['model_name']}")
+        gui_handlers.update_step_states(self)
 
     def _on_model_download_progress(self, message):
         """Handle model download progress with enhanced tracking."""
@@ -492,6 +493,7 @@ class ModernImageTaggerGUI(ctk.CTk):
         if self.status_label:
             self.status_label.configure(text=f"✅ Connected to Daminion: {item_count} items")
         logging.info(f"Daminion connected: {item_count} items available")
+        gui_handlers.update_step_states(self)
 
     def _on_daminion_collections(self, collections):
         """Handle Daminion collections update."""
