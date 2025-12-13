@@ -196,11 +196,19 @@ def update_step_states(gui_instance):
 
     if source_ready and gui_instance.model and config_ready:
         if gui_instance.start_button:
-            gui_instance.start_button.configure(state="normal")
+            gui_instance.start_button.configure(
+                state="normal",
+                fg_color="green",
+                hover_color="darkgreen"
+            )
         gui_instance.step4_status.configure(text="🚀 Ready to process!", text_color="green")
     else:
         if gui_instance.start_button:
-            gui_instance.start_button.configure(state="disabled")
+            gui_instance.start_button.configure(
+                state="disabled",
+                fg_color="gray",
+                hover_color="gray"
+            )
         missing = []
         if not source_ready:
             missing.append("image source")

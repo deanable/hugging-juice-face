@@ -536,8 +536,9 @@ def create_step4_process(parent, gui_instance):
         width=150,
         height=40,
         font=ctk.CTkFont(size=14, weight="bold"),
-        fg_color="green",
-        hover_color="darkgreen"
+        fg_color="gray",
+        hover_color="gray",
+        state="disabled"
     )
     gui_instance.start_button.pack(side="left", padx=(0, 15))
 
