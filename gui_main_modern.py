@@ -65,6 +65,7 @@ class ModernImageTaggerGUI(ctk.CTk):
 
         self.all_models = set()
         self.downloaded_models = set()
+        self.all_models_with_tasks = {}  # Dict mapping task -> set of model IDs
         
         # Initialize attributes for modern GUI
         self.daminion_url_entry: Optional[ctk.CTkEntry] = None
@@ -99,6 +100,12 @@ class ModernImageTaggerGUI(ctk.CTk):
         self._create_widgets()
         self._create_menu()
         gui_handlers.update_step_states(self)
+
+        # Set initial Step 3 visibility based on default task
+        try:
+            gui_handlers.update_step3_visibility(self)
+        except Exception as e:
+            logging.warning(f"Could not set initial Step 3 visibility: {e}")
 
         try:
             gui_handlers.on_scope_change(self)
@@ -246,14 +253,27 @@ class ModernImageTaggerGUI(ctk.CTk):
         gui_handlers.show_report_summary(self)
 
     def scan_local_models(self):
-        """Scan for locally cached models."""
+        """Scan for locally cached models and organize by current task."""
         try:
             cache_dir = Path(config.HF_CACHE_DIR)
             if cache_dir.exists():
                 models = [d.name for d in cache_dir.iterdir() if d.is_dir()]
                 self.all_models.update(models)
                 self.downloaded_models.update(models)
-                logging.info(f"Found {len(models)} local models")
+
+                # Get current task to filter models
+                current_task = self.model_task.get() if self.model_task else config.MODEL_TASK_IMAGE_CLASSIFICATION
+
+                # Store models for current task
+                if current_task not in self.all_models_with_tasks:
+                    self.all_models_with_tasks[current_task] = set()
+                self.all_models_with_tasks[current_task].update(models)
+
+                logging.info(f"Found {len(models)} local cached models for {current_task}")
+
+                # Update the model list display with filtered models
+                if self.model_listbox:
+                    gui_handlers.update_model_list(self, models, self.downloaded_models)
         except Exception as e:
             logging.error(f"Error scanning local models: {e}")
 
@@ -492,44 +512,33 @@ class ModernImageTaggerGUI(ctk.CTk):
                 self.refresh_collections_btn.configure(state="normal")
 
     def _on_models_found(self, data):
-        """Handle models found message."""
+        """Handle models found message.
+
+        Stores models organized by task type for efficient filtering.
+        """
         model_ids, downloaded = data
         self.all_models.update(model_ids)
         self.downloaded_models.update(downloaded)
-        
-        if self.model_listbox:
-            # Clear existing
-            for widget in self.model_listbox.winfo_children():
-                widget.destroy()
-            
-            # Sort models
-            sorted_models = sorted(list(self.all_models), key=lambda x: (x not in self.downloaded_models, x))
-            
-            for model_id in sorted_models:
-                model_frame = ctk.CTkFrame(self.model_listbox)
-                model_frame.pack(fill="x", padx=5, pady=5)
-                
-                is_cached = model_id in self.downloaded_models
-                cached_text = "✅ Cached" if is_cached else "☁️ Cloud"
-                cached_color = "green" if is_cached else ("gray", "gray")
-                
-                radio_args = {
-                    "text": f"{model_id}   [{cached_text}]",
-                    "variable": self.selected_model_var,
-                    "value": model_id,
-                    "font": ctk.CTkFont(weight="bold")
-                }
-                if is_cached:
-                    radio_args["text_color"] = cached_color
-                
-                radio_btn = ctk.CTkRadioButton(model_frame, **radio_args)
-                radio_btn.pack(anchor="w", padx=10, pady=(10, 5))
-        
+
+        # Get current task and store models for this task
+        current_task = self.model_task.get() if self.model_task else config.MODEL_TASK_IMAGE_CLASSIFICATION
+        if current_task not in self.all_models_with_tasks:
+            self.all_models_with_tasks[current_task] = set()
+        self.all_models_with_tasks[current_task].update(model_ids)
+
+        # Use the centralized update function
+        gui_handlers.update_model_list(self, list(model_ids), downloaded)
+
         if self.find_models_button:
             self.find_models_button.configure(state="normal", text="🔍 Find Models")
-            
+
+        cached_count = len([m for m in model_ids if m in downloaded])
+        cloud_count = len(model_ids) - cached_count
+
         if self.status_label:
-            self.status_label.configure(text=f"Found {len(self.all_models)} models")
+            self.status_label.configure(
+                text=f"Found {len(model_ids)} models for {current_task} ({cached_count} cached, {cloud_count} cloud)"
+            )
 
     def _on_processing_done(self, message):
         """Handle processing completion message."""

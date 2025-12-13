@@ -363,18 +363,17 @@ def create_step3_config(parent, gui_instance):
     )
     title_label.pack(anchor="w", pady=(0, 15))
 
-    # Categories section (for classification tasks)
-    cat_section = ctk.CTkFrame(main_frame)
-    cat_section.pack(fill="x", pady=(0, 20))
+    # Categories section (for classification tasks) - conditionally visible
+    gui_instance.categories_section = ctk.CTkFrame(main_frame)
 
     cat_label = ctk.CTkLabel(
-        cat_section,
+        gui_instance.categories_section,
         text="📝 Categories (for Image Classification)",
         font=ctk.CTkFont(size=14, weight="bold")
     )
     cat_label.pack(anchor="w", padx=20, pady=(15, 10))
 
-    cat_frame = ctk.CTkFrame(cat_section, fg_color="transparent")
+    cat_frame = ctk.CTkFrame(gui_instance.categories_section, fg_color="transparent")
     cat_frame.pack(fill="x", padx=40, pady=(0, 15))
 
     ctk.CTkLabel(cat_frame, text="Categories:", width=120, anchor="w").pack(side="left")
@@ -387,18 +386,17 @@ def create_step3_config(parent, gui_instance):
     default_cats = gui_instance.config_manager.get('default_categories', 'Scenery, Portrait, Document')
     gui_instance.categories_entry.insert(0, default_cats)
 
-    # Keywords section (for zero-shot tasks)
-    kw_section = ctk.CTkFrame(main_frame)
-    kw_section.pack(fill="x", pady=(0, 20))
+    # Keywords section (for zero-shot tasks) - conditionally visible
+    gui_instance.keywords_section = ctk.CTkFrame(main_frame)
 
     kw_label = ctk.CTkLabel(
-        kw_section,
+        gui_instance.keywords_section,
         text="🔑 Keywords (for Zero-Shot Classification)",
         font=ctk.CTkFont(size=14, weight="bold")
     )
     kw_label.pack(anchor="w", padx=20, pady=(15, 10))
 
-    kw_frame = ctk.CTkFrame(kw_section, fg_color="transparent")
+    kw_frame = ctk.CTkFrame(gui_instance.keywords_section, fg_color="transparent")
     kw_frame.pack(fill="x", padx=40, pady=(0, 15))
 
     ctk.CTkLabel(kw_frame, text="Keywords:", width=120, anchor="w").pack(side="left")

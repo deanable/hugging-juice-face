@@ -246,6 +246,87 @@ def update_task_description(gui_instance):
         logging.warning(f"Could not update task description: {e}")
 
 
+def update_step3_visibility(gui_instance):
+    """Update visibility of Step 3 sections based on selected analysis type.
+
+    Shows/hides Categories and Keywords sections based on the selected task:
+    - Image Classification: Show Categories only
+    - Zero-Shot: Show Keywords only
+    - Image-to-Text: Hide both (auto-generates)
+
+    Args:
+        gui_instance: Reference to main GUI instance
+    """
+    try:
+        task = gui_instance.model_task.get()
+
+        # Show/hide Categories section
+        if hasattr(gui_instance, 'categories_section'):
+            if task == config.MODEL_TASK_IMAGE_CLASSIFICATION:
+                # Pack before scope section to maintain order
+                if hasattr(gui_instance, 'scope_var') and gui_instance.scope_var.master and gui_instance.scope_var.master.master:
+                    gui_instance.categories_section.pack(fill="x", pady=(0, 20), before=gui_instance.scope_var.master.master)
+                else:
+                    gui_instance.categories_section.pack(fill="x", pady=(0, 20))
+            else:
+                gui_instance.categories_section.pack_forget()
+
+        # Show/hide Keywords section
+        if hasattr(gui_instance, 'keywords_section'):
+            if task == config.MODEL_TASK_ZERO_SHOT:
+                # Pack before scope section to maintain order
+                if hasattr(gui_instance, 'scope_var') and gui_instance.scope_var.master and gui_instance.scope_var.master.master:
+                    gui_instance.keywords_section.pack(fill="x", pady=(0, 20), before=gui_instance.scope_var.master.master)
+                else:
+                    gui_instance.keywords_section.pack(fill="x", pady=(0, 20))
+            else:
+                gui_instance.keywords_section.pack_forget()
+
+        logging.debug(f"Updated Step 3 visibility for task: {task}")
+    except Exception as e:
+        logging.warning(f"Could not update Step 3 visibility: {e}")
+
+
+def filter_models_by_task(gui_instance, task):
+    """Filter the model list to show only models compatible with the selected task.
+
+    Args:
+        gui_instance: Reference to main GUI instance
+        task: Selected model task type
+    """
+    try:
+        # Get all models stored with their task info
+        if not hasattr(gui_instance, 'all_models_with_tasks'):
+            # If we don't have task info stored, just show all models
+            logging.warning("No task information available for models, showing all")
+            return
+
+        # Filter models that support the current task
+        task_models = gui_instance.all_models_with_tasks.get(task, set())
+
+        # Update the display with filtered models
+        downloaded = gui_instance.downloaded_models if hasattr(gui_instance, 'downloaded_models') else set()
+        update_model_list(gui_instance, list(task_models), downloaded)
+
+        # Update status
+        cached_count = len([m for m in task_models if m in downloaded])
+        cloud_count = len(task_models) - cached_count
+
+        if gui_instance.status_label:
+            if task_models:
+                gui_instance.status_label.configure(
+                    text=f"ℹ️ Showing {len(task_models)} models for {task} ({cached_count} cached, {cloud_count} cloud)"
+                )
+            else:
+                gui_instance.status_label.configure(
+                    text=f"ℹ️ No cached models for {task}. Click 'Find Models' to search HuggingFace."
+                )
+
+        logging.info(f"Filtered to {len(task_models)} models for task: {task}")
+    except Exception as e:
+        logging.error(f"Failed to filter models by task: {e}")
+
+
 def calculate_time_remaining(gui_instance, completed, total):
     """Calculate estimated time remaining.
 
@@ -279,24 +360,33 @@ def calculate_time_remaining(gui_instance, completed, total):
 def on_model_task_change(gui_instance, event=None):
     """Handle model task selection change.
 
+    Filters existing model list instead of re-fetching from HuggingFace.
+    Updates Step 3 visibility based on selected task.
+
     Args:
         gui_instance: Reference to main GUI instance
         event: Tkinter event (optional)
     """
     update_task_description(gui_instance)
+    update_step3_visibility(gui_instance)
     update_step_states(gui_instance)
 
-    # Re-scan for models when task changes
-    try:
-        gui_instance.after(0, gui_instance.on_find_models)
-    except Exception as e:
-        logging.error(f"Failed to rescan for models after task change: {e}")
-
+    # Filter existing model list by task instead of re-fetching
     try:
         task = gui_instance.model_task.get()
         logging.info(f"Model task changed to: {task}")
-    except:
-        pass
+
+        # If we have models already loaded, filter them by the new task
+        if hasattr(gui_instance, 'all_models') and gui_instance.all_models:
+            filter_models_by_task(gui_instance, task)
+        else:
+            # No models loaded yet, show placeholder message
+            if gui_instance.status_label:
+                gui_instance.status_label.configure(
+                    text="ℹ️ Click 'Find Models' to search for compatible models"
+                )
+    except Exception as e:
+        logging.error(f"Failed to filter models after task change: {e}")
 
 
 def on_mode_change(gui_instance, mode):
