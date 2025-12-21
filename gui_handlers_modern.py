@@ -577,6 +577,17 @@ def on_find_models(gui_instance):
 
 
 
+def on_model_selected(gui_instance):
+    """Enable Load Model button when a model is selected.
+
+    Args:
+        gui_instance: Reference to main GUI instance
+    """
+    if gui_instance.load_model_button and gui_instance.selected_model_var.get():
+        gui_instance.load_model_button.configure(state="normal")
+        logging.debug(f"Model selected: {gui_instance.selected_model_var.get()}")
+
+
 def update_model_list(gui_instance, models, downloaded_models):
     """Update the model list display with cached models prioritized."""
     try:
@@ -608,7 +619,8 @@ def update_model_list(gui_instance, models, downloaded_models):
                 "text": f"{model_id}   [{cached_text}]",
                 "variable": gui_instance.selected_model_var,
                 "value": model_id,
-                "font": ctk.CTkFont(weight="bold")
+                "font": ctk.CTkFont(weight="bold"),
+                "command": lambda: on_model_selected(gui_instance)
             }
 
             if is_cached:
