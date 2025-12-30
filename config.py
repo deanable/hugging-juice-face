@@ -28,6 +28,15 @@ MODEL_TASK_IMAGE_CLASSIFICATION = "image-classification"
 MODEL_TASK_ZERO_SHOT = "zero-shot-image-classification"
 MODEL_TASK_IMAGE_TO_TEXT = "image-to-text"
 
+# Task Display Names
+TASK_DISPLAY_MAP = {
+    MODEL_TASK_IMAGE_CLASSIFICATION: "Categories",
+    MODEL_TASK_ZERO_SHOT: "Keywords",
+    MODEL_TASK_IMAGE_TO_TEXT: "Description"
+}
+
+DISPLAY_TASK_MAP = {v: k for k, v in TASK_DISPLAY_MAP.items()}
+
 # --- Image Processing ---
 SUPPORTED_IMAGE_EXTENSIONS = ("*.jpg", "*.jpeg", "*.png")
 ZERO_SHOT_CONFIDENCE_THRESHOLD = 0.9

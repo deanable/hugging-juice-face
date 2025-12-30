@@ -218,17 +218,14 @@ def create_step2_model(parent, gui_instance):
     ctk.CTkLabel(task_frame, text="Analysis Type:", width=120, anchor="w").pack(side="left")
     gui_instance.model_task = ctk.CTkOptionMenu(
         task_frame,
-        values=[
-            config.MODEL_TASK_IMAGE_CLASSIFICATION,
-            config.MODEL_TASK_ZERO_SHOT,
-            config.MODEL_TASK_IMAGE_TO_TEXT
-        ]
+        values=list(config.TASK_DISPLAY_MAP.values())
     )
     gui_instance.model_task.pack(side="left", padx=(10, 0), fill="x", expand=True)
 
     # Set default task
-    last_task = gui_instance.config_manager.get('last_model_task', config.MODEL_TASK_IMAGE_CLASSIFICATION)
-    gui_instance.model_task.set(last_task)
+    last_task = gui_instance.config_manager.get('last_model_task', config.MODEL_TASK_IMAGE_TO_TEXT)
+    display_task = config.TASK_DISPLAY_MAP.get(last_task, "Description")
+    gui_instance.model_task.set(display_task)
     gui_instance.model_task.configure(command=gui_instance.on_model_task_change)
 
     # Task description
@@ -254,6 +251,14 @@ def create_step2_model(parent, gui_instance):
     # Search and load buttons
     search_frame = ctk.CTkFrame(search_section, fg_color="transparent")
     search_frame.pack(fill="x", padx=40, pady=(0, 15))
+
+    # Search Entry
+    gui_instance.model_search_entry = ctk.CTkEntry(
+        search_frame,
+        placeholder_text="Filter models (e.g. 'resnet', 'blip')...",
+        width=250
+    )
+    gui_instance.model_search_entry.pack(side="left", padx=(0, 10))
 
     gui_instance.find_models_button = ctk.CTkButton(
         search_frame,

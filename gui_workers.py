@@ -70,17 +70,30 @@ def connect_daminion_worker(gui_instance, url, username, password):
         gui_instance.q.put({'type': 'daminion_error', 'error': str(e)})
 
 
-def find_models_worker(gui_instance):
+def find_models_worker(gui_instance, search_query=None):
     """Worker thread for finding models.
 
     Args:
         gui_instance: Reference to main GUI instance
+        search_query: Optional manual search query
     """
     try:
-        task = gui_instance.model_task.get()
-        model_ids, downloaded_models = huggingface_utils.find_models_by_task(task)
+        display_task = gui_instance.model_task.get()
+        task = config.DISPLAY_TASK_MAP.get(display_task, "")
+        
+        # If manual search query is provided, use it.
+        # Otherwise, search by task.
+        if search_query:
+             # Search by model name/ID
+            model_ids, downloaded_models = huggingface_utils.find_models_by_name(search_query, task, limit=20)
+            logging.info(f"Searching for models with query: '{search_query}' (Filter task: {task})")
+        else:
+             # Search by task
+            model_ids, downloaded_models = huggingface_utils.find_models_by_task(task)
+            logging.info(f"Searching for models by task: {task} (Display: {display_task})")
+
         gui_instance.q.put({'type': 'models_found', 'models': (model_ids, downloaded_models)})
-        logging.info(f"Found {len(model_ids)} models for task {task}.")
+        logging.info(f"Found {len(model_ids)} models.")
     except Exception as e:
         logging.exception("Failed to find models.")
         gui_instance.q.put({'type': 'error', 'error': f"Failed to find models: {e}"})
@@ -111,7 +124,9 @@ def load_model_worker(gui_instance, model_id, device=-1):
         device: Device ID (-1 for CPU, 0 for CUDA, "mps" for MPS)
     """
     try:
-        task = gui_instance.model_task.get()
+        display_task = gui_instance.model_task.get()
+        task = config.DISPLAY_TASK_MAP.get(display_task, "")
+        
         token = gui_instance.config_manager.get('hf_token')
         
         # Pass device to load_model_with_progress for granular updates
@@ -134,8 +149,10 @@ def find_local_models_worker(gui_instance):
         gui_instance: Reference to main GUI instance
     """
     try:
-        task = gui_instance.model_task.get()
-        logging.info(f"Scanning local cache for models with task: '{task}'")
+        display_task = gui_instance.model_task.get()
+        task = config.DISPLAY_TASK_MAP.get(display_task, "")
+        
+        logging.info(f"Scanning local cache for models with task: '{task}' (Display: {display_task})")
         local_models = huggingface_utils.find_local_models_by_task(task)
         gui_instance.q.put({'type': 'models_found', 'models': (local_models, local_models)})
     except Exception as e:
@@ -164,7 +181,8 @@ def process_daminion_worker(gui_instance, categories, keywords, items=None, devi
     # Ideally Daminion should also be batched, but that requires refactoring DaminionClient heavily.
     # We will just use the threshold in the loop.
 
-    model_task = gui_instance.model_task.get()
+    display_task = gui_instance.model_task.get()
+    model_task = config.DISPLAY_TASK_MAP.get(display_task, "")
     
     if not gui_instance.daminion_client:
         gui_instance.q.put({'type': 'error', 'error': "Daminion client not initialized"})
@@ -274,7 +292,9 @@ def process_images_worker(gui_instance, image_files, categories, keywords, devic
         truncation: Whether to truncate inputs
         threshold: Confidence threshold
     """
-    model_task = gui_instance.model_task.get().strip()
+    display_task = gui_instance.model_task.get().strip()
+    model_task = config.DISPLAY_TASK_MAP.get(display_task, "")
+    results = []
     
     # Validated images
     valid_paths = [p for p in image_files if p.exists()]

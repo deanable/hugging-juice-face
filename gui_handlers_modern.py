@@ -161,7 +161,9 @@ def update_step_states(gui_instance):
 
     # Step 3: Configuration ready?
     try:
-        task = gui_instance.model_task.get()
+        display_task = gui_instance.model_task.get()
+        task = config.DISPLAY_TASK_MAP.get(display_task, "")
+        
         cats = gui_instance.categories_entry.get().strip()
         kws = gui_instance.keywords_entry.get().strip()
     except:
@@ -240,7 +242,9 @@ def update_task_description(gui_instance):
         gui_instance: Reference to main GUI instance
     """
     try:
-        task = gui_instance.model_task.get()
+        display_task = gui_instance.model_task.get()
+        task = config.DISPLAY_TASK_MAP.get(display_task, "")
+        
         descriptions = {
             config.MODEL_TASK_IMAGE_CLASSIFICATION:
                 "📋 Assigns ONE category to each image from your predefined list (e.g., Interior, Exterior, Furniture)",
@@ -381,8 +385,9 @@ def on_model_task_change(gui_instance, event=None):
 
     # Filter existing model list by task instead of re-fetching
     try:
-        task = gui_instance.model_task.get()
-        logging.info(f"Model task changed to: {task}")
+        display_task = gui_instance.model_task.get()
+        task = config.DISPLAY_TASK_MAP.get(display_task, "")
+        logging.info(f"Model task changed to: {task} (Display: {display_task})")
 
         # If we have models already loaded, filter them by the new task
         if hasattr(gui_instance, 'all_models') and gui_instance.all_models:
@@ -561,10 +566,17 @@ def on_find_models(gui_instance):
     try:
         gui_instance.find_models_button.configure(state="disabled", text="🔍 Searching...")
         
+        # Get optional search query
+        search_query = None
+        if hasattr(gui_instance, 'model_search_entry'):
+            q = gui_instance.model_search_entry.get().strip()
+            if q:
+                search_query = q
+
         # Start model search in worker thread
         thread = threading.Thread(
             target=gui_workers.find_models_worker,
-            args=(gui_instance,),
+            args=(gui_instance, search_query),
             daemon=True
         )
         thread.start()

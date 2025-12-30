@@ -309,40 +309,48 @@ class ModernImageTaggerGUI(ctk.CTk):
         gui_handlers.show_report_summary(self)
 
     def scan_local_models(self):
-        """Scan for locally cached models and organize by current task."""
+        """Scan for locally cached models across all supported tasks."""
         try:
-            # Use utility to find models SPECIFIC to the current task
             import huggingface_utils
             
-            # Get current task to filter models
-            current_task = self.model_task.get() if self.model_task else config.MODEL_TASK_IMAGE_CLASSIFICATION
+            # Supported tasks to scan
+            tasks_to_scan = [
+                config.MODEL_TASK_IMAGE_CLASSIFICATION,
+                config.MODEL_TASK_IMAGE_TO_TEXT,
+                config.MODEL_TASK_ZERO_SHOT
+            ]
             
-            # Using the proper utility that checks pipeline_tag
-            models = huggingface_utils.find_local_models_by_task(current_task)
+            total_found = 0
             
-            if models:
-                self.all_models.update(models)
-                self.downloaded_models.update(models)
-
-                # Store models for current task
-                if current_task not in self.all_models_with_tasks:
-                    self.all_models_with_tasks[current_task] = set()
+            for task in tasks_to_scan:
+                # Using the proper utility that checks pipeline_tag
+                models = huggingface_utils.find_local_models_by_task(task)
                 
-                self.all_models_with_tasks[current_task].update(models)
+                if models:
+                    self.all_models.update(models)
+                    self.downloaded_models.update(models)
 
-                logging.info(f"Found {len(models)} local cached models for task '{current_task}'")
+                    # Store models for this task
+                    if task not in self.all_models_with_tasks:
+                        self.all_models_with_tasks[task] = set()
+                    
+                    self.all_models_with_tasks[task].update(models)
+                    total_found += len(models)
+                    logging.info(f"startup scan: Found {len(models)} local models for '{task}'")
+
+            # After scanning all, update display for CURRENT task
+            if self.model_task:
+                display_task = self.model_task.get()
+                current_task = config.DISPLAY_TASK_MAP.get(display_task, config.MODEL_TASK_IMAGE_CLASSIFICATION)
             else:
-                logging.info(f"No local models found for task '{current_task}'")
-                
-                # Also ensure we clean up if switching tasks so we don't show invalid ones?
-                # The all_models_with_tasks dict handles that segregation.
-
-
-                logging.info(f"Found {len(models)} local cached models for {current_task}")
-
-                # Update the model list display with filtered models
-                if self.model_listbox:
-                    gui_handlers.update_model_list(self, models, self.downloaded_models)
+                 current_task = config.MODEL_TASK_IMAGE_CLASSIFICATION
+                 
+            current_task_models = list(self.all_models_with_tasks.get(current_task, set()))
+            
+            gui_handlers.update_model_list(self, current_task_models, self.downloaded_models)
+            
+            logging.info(f"Startup scan complete. Total cached models found: {total_found}")
+            
         except Exception as e:
             logging.error(f"Error scanning local models: {e}")
 
