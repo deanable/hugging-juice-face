@@ -64,6 +64,10 @@ class ModelConfig(BaseModel):
         le=500,
         description="Maximum number of models to return in search"
     )
+    hf_token: Optional[str] = Field(
+        default=None,
+        description="Hugging Face API Token"
+    )
 
     @field_validator('last_model_task')
     @classmethod
@@ -192,6 +196,7 @@ class AppConfig(BaseModel):
             'zero_shot_threshold': self.processing.zero_shot_threshold,
             'last_model_task': self.model.last_model_task,
             'last_model_id': self.model.last_model_id,
+            'hf_token': self.model.hf_token,
             'daminion_url': self.daminion.url,
             'daminion_username': self.daminion.username,
             'default_categories': self.tagging.default_categories,
@@ -210,6 +215,7 @@ class AppConfig(BaseModel):
             model=ModelConfig(
                 last_model_task=data.get('last_model_task', config.MODEL_TASK_IMAGE_CLASSIFICATION),
                 last_model_id=data.get('last_model_id'),
+                hf_token=data.get('hf_token'),
             ),
             daminion=DaminionConfig(
                 url=data.get('daminion_url', 'https://interiors.daminion.net'),

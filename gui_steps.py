@@ -186,6 +186,12 @@ def create_step2_model(parent, gui_instance):
     )
     gui_instance.find_models_button.pack(side="left")
 
+    gui_instance.set_token_button = ttk.Button(
+        search_frame, text="🔑 Set API Token",
+        command=gui_instance.set_hf_token, width=15
+    )
+    gui_instance.set_token_button.pack(side="left", padx=(10, 0))
+
     ttk.Label(frame, text="Available Models:", font=("Arial", 9)).pack(anchor="w", pady=(0, 5))
 
     list_frame = ttk.Frame(frame)

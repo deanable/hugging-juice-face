@@ -7,7 +7,7 @@ import logging
 import time
 import threading
 import tkinter as tk
-from tkinter import filedialog, messagebox
+from tkinter import filedialog, messagebox, simpledialog
 from pathlib import Path
 import config
 
@@ -347,3 +347,16 @@ def show_model_info(gui_instance, event=None):
     threading.Thread(
         target=lambda: gui_instance.show_model_info_worker(model_id), daemon=True
     ).start()
+
+def set_hf_token(gui_instance):
+    """Dialog to set the Hugging Face API token."""
+    current_token = gui_instance.config_manager.get('hf_token') or ""
+    token = simpledialog.askstring(
+        "Hugging Face API Token", 
+        "Enter your Hugging Face API Token (Read access):\n(Leave empty to remove)", 
+        parent=gui_instance, initialvalue=current_token
+    )
+    if token is not None:
+        gui_instance.config_manager.set('hf_token', token.strip() if token.strip() else None)
+        gui_instance.config_manager.save_config()
+        messagebox.showinfo("Token Saved", "API Token updated successfully.")

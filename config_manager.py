@@ -21,6 +21,7 @@ class ConfigManager:
     DEFAULT_CONFIG = {
         "last_model_task": "image-classification",
         "last_model_id": None,
+        "hf_token": None,
         "last_directory": None,
         "default_categories": "Scenery, Portrait, Document, Animal",
         "default_keywords": "beach, sunset, dog, car, winter",

@@ -111,7 +111,8 @@ def load_model_worker(gui_instance, model_id):
     """
     try:
         task = gui_instance.model_task.get()
-        model = huggingface_utils.load_model(model_id, task, progress_queue=gui_instance.q)
+        token = gui_instance.config_manager.get('hf_token')
+        model = huggingface_utils.load_model(model_id, task, progress_queue=gui_instance.q, token=token)
         gui_instance.q.put({'type': 'model_loaded', 'model': model, 'model_name': model_id})
         logging.info(f"Model {model_id} loaded successfully.")
     except Exception as e:

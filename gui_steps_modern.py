@@ -266,6 +266,15 @@ def create_step2_model(parent, gui_instance):
     )
     gui_instance.find_models_button.pack(side="left", padx=(0, 10))
 
+    gui_instance.set_token_button = ctk.CTkButton(
+        search_frame,
+        text="🔑 Set Token",
+        command=gui_instance.on_set_hf_token,
+        width=100,
+        height=35
+    )
+    gui_instance.set_token_button.pack(side="left", padx=(0, 10))
+
     gui_instance.load_model_button = ctk.CTkButton(
         search_frame,
         text="📥 Load Selected Model",

@@ -77,6 +77,7 @@ class ImageTaggerGUI(tk.Tk):
         self.model_progress_bar: Optional[ttk.Progressbar] = None
         self.model_progress_label: Optional[ttk.Label] = None
         self.daminion_collections: List[Dict] = []
+        self.current_model_list: List[str] = []
 
         self._create_widgets()
         self._create_menu()
@@ -133,6 +134,10 @@ class ImageTaggerGUI(tk.Tk):
         self.step2_pane = gui_steps.CollapsiblePane(main_container, title="Step 2: Select AI Model")
         self.step2_pane.pack(fill="x", pady=(0, 10))
         gui_steps.create_step2_model(self.step2_pane.content, self)
+        
+        # Ensure Listbox is visible (fix for CustomTkinter dark mode issues)
+        if self.model_listbox:
+            self.model_listbox.config(bg="white", fg="black", selectbackground="#0078D7", selectforeground="white")
 
         self.step3_pane = gui_steps.CollapsiblePane(main_container, title="Step 3: Configure Tagging")
         self.step3_pane.pack(fill="x", pady=(0, 10))
@@ -164,13 +169,28 @@ class ImageTaggerGUI(tk.Tk):
         gui_handlers.update_task_description(self)
 
     def show_model_info(self, event=None):
-        gui_handlers.show_model_info(self, event)
+        """Show model info and update button state."""
+        if not self.model_listbox:
+            return
+            
+        selection = self.model_listbox.curselection()
+        if not selection:
+            return
+            
+        index = selection[0]
+        if index < len(self.current_model_list):
+            model_id = self.current_model_list[index]
+            self._update_load_button(model_id)
+            self.show_model_info_worker(model_id)
 
     def _update_step_states(self):
         gui_handlers.update_step_states(self)
 
     def calculate_time_remaining(self, completed, total):
         return gui_handlers.calculate_time_remaining(self, completed, total)
+
+    def set_hf_token(self):
+        gui_handlers.set_hf_token(self)
 
     def scan_local_models(self):
         """Scan for locally cached models on startup."""
@@ -229,8 +249,7 @@ class ImageTaggerGUI(tk.Tk):
             messagebox.showerror("Error", "Please select a model from the list.")
             return
 
-        model_id_display = self.model_listbox.get(selection[0])
-        model_id = model_id_display.split(" (")[0]
+        model_id = self.current_model_list[selection[0]]
 
         self.load_model_button.config(state="disabled")
         self.status_label.config(text=f"Status: Downloading and loading {model_id}...")
@@ -434,6 +453,60 @@ class ImageTaggerGUI(tk.Tk):
         self.status_label.config(text="Status: Refreshing Daminion collections...")
         threading.Thread(target=gui_workers.refresh_daminion_collections_worker, args=(self,), daemon=True).start()
 
+    def format_model_name(self, model_id):
+        """Format model ID into a friendly name."""
+        # user/repo-name -> Repo Name
+        if "/" in model_id:
+            name = model_id.split("/")[-1]
+        else:
+            name = model_id
+        return name.replace("-", " ").replace("_", " ").title()
+
+    def _update_load_button(self, model_id):
+        """Update load button text based on cache status."""
+        if not self.load_model_button:
+            return
+        if model_id in self.downloaded_models:
+            self.load_model_button.config(text="Load Model (Cached)")
+        else:
+            self.load_model_button.config(text="Download & Load Model")
+
+    def _refresh_model_list(self):
+        """Refresh the model listbox with friendly names."""
+        if not self.model_listbox:
+            return
+
+        # Preserve selection
+        selection = self.model_listbox.curselection()
+        selected_model_id = None
+        if selection and selection[0] < len(self.current_model_list):
+            selected_model_id = self.current_model_list[selection[0]]
+
+        self.model_listbox.delete(0, tk.END)
+        self.current_model_list = []
+        
+        sorted_models = sorted(list(self.all_models))
+
+        for model_id in sorted_models:
+            self.current_model_list.append(model_id)
+            friendly_name = self.format_model_name(model_id)
+            
+            if model_id in self.downloaded_models:
+                self.model_listbox.insert(tk.END, f"{friendly_name} (Cached)")
+                self.model_listbox.itemconfig(tk.END, fg='green')
+            else:
+                self.model_listbox.insert(tk.END, friendly_name)
+
+        # Restore selection
+        if selected_model_id:
+            try:
+                new_index = self.current_model_list.index(selected_model_id)
+                self.model_listbox.selection_set(new_index)
+                self.model_listbox.see(new_index)
+                self._update_load_button(selected_model_id)
+            except ValueError:
+                pass
+
     def process_queue(self):
         """Process messages from worker threads."""
         try:
@@ -445,20 +518,21 @@ class ImageTaggerGUI(tk.Tk):
                 assert self.status_label is not None
                 assert self.find_models_button is not None
                 
-                model_ids, downloaded = data
+                # Robust data handling to prevent unpacking errors
+                model_ids = []
+                downloaded = []
+                
+                if isinstance(data, list):
+                    model_ids = data
+                elif isinstance(data, tuple) and len(data) == 2:
+                    m, d = data
+                    if isinstance(m, (list, set, tuple)): model_ids = m
+                    if isinstance(d, (list, set, tuple)): downloaded = d
+                
                 self.all_models.update(model_ids)
                 self.downloaded_models.update(downloaded)
 
-                self.model_listbox.delete(0, tk.END)
-                
-                sorted_models = sorted(list(self.all_models))
-
-                for model_id in sorted_models:
-                    if model_id in self.downloaded_models:
-                        self.model_listbox.insert(tk.END, f"{model_id} ([OK] cached)")
-                        self.model_listbox.itemconfig(tk.END, fg='green')
-                    else:
-                        self.model_listbox.insert(tk.END, model_id)
+                self._refresh_model_list()
                 self.status_label.config(text=f"Status: Found {len(self.all_models)} models. Select one to see details.")
                 self.find_models_button.config(state="normal")
                 self._update_step_states()
@@ -520,6 +594,10 @@ class ImageTaggerGUI(tk.Tk):
                 assert self.model_progress_label is not None
                 self.model = data
                 model_name = self.model.model.name_or_path
+                
+                self.downloaded_models.add(model_name)
+                self._refresh_model_list()
+                
                 self.config_manager.set('last_model_id', model_name)
                 self.config_manager.set('last_model_task', self.model_task.get())
                 self.config_manager.save_config()

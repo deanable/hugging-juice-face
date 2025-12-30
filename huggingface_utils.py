@@ -65,10 +65,10 @@ def get_model_cache_dir(model_id):
     """Returns the cache directory for a given model."""
     return os.path.join(HUGGINGFACE_HUB_CACHE, f"models--{model_id.replace('/', '--')}")
 
-def is_model_downloaded(model_id):
+def is_model_downloaded(model_id, token=None):
     """Check if a model is fully downloaded."""
     try:
-        api = HfApi()
+        api = HfApi(token=token)
         model_info = api.model_info(repo_id=model_id)
         model_cache_dir = get_model_cache_dir(model_id)
         # Check for snapshot directory
@@ -100,15 +100,15 @@ def is_model_downloaded(model_id):
         logging.error(f"Error checking if model {model_id} is downloaded: {e}")
         return False
 
-def get_downloaded_models(task):
+def get_downloaded_models(task, token=None):
     """Get a list of downloaded models for a given task."""
     logging.info(f"Searching for downloaded models with task: '{task}'")
     try:
         # Limit results to reduce network load and UI clutter
-        models = list_models(filter=task, sort="downloads", direction=-1, limit=config.MODEL_SEARCH_LIMIT)
+        models = list_models(filter=task, sort="downloads", direction=-1, limit=config.MODEL_SEARCH_LIMIT, token=token)
         downloaded_models = []
         for model in models or []:
-            if is_model_downloaded(model.id):
+            if is_model_downloaded(model.id, token=token):
                 downloaded_models.append(model.id)
         logging.info(f"Found {len(downloaded_models)} downloaded models.")
         return downloaded_models
@@ -116,14 +116,14 @@ def get_downloaded_models(task):
         logging.exception("Failed to find downloaded models.")
         return []
 
-def find_models_worker(task, q):
+def find_models_worker(task, q, token=None):
     """Worker thread to fetch model list from Hugging Face Hub."""
     logging.info(f"Searching for models with task: '{task}'")
     try:
         # Request the top N models by downloads to keep the UI responsive.
-        models = list_models(filter=task, sort="downloads", direction=-1, limit=config.MODEL_SEARCH_LIMIT)
+        models = list_models(filter=task, sort="downloads", direction=-1, limit=config.MODEL_SEARCH_LIMIT, token=token)
         model_ids = [model.id for model in models or []][:config.MODEL_SEARCH_LIMIT]
-        downloaded_models = [model_id for model_id in model_ids if is_model_downloaded(model_id)]
+        downloaded_models = [model_id for model_id in model_ids if is_model_downloaded(model_id, token=token)]
         logging.info(f"Found {len(model_ids)} models.")
         q.put(("models_found", (model_ids, downloaded_models)))
     except Exception as e:
@@ -189,11 +189,11 @@ def find_local_models_by_task(task: str) -> list[str]:
     return task_specific_models
 
 
-def show_model_info_worker(model_id, q):
+def show_model_info_worker(model_id, q, token=None):
     """Worker thread to download a model's README file."""
     logging.info(f"Fetching README for model: {model_id}")
     try:
-        readme_path = hf_hub_download(repo_id=model_id, filename="README.md")
+        readme_path = hf_hub_download(repo_id=model_id, filename="README.md", token=token)
         with open(readme_path, "r", encoding="utf-8") as f:
             readme_content = f.read()
         logging.info(f"Successfully fetched README for model: {model_id}")
@@ -202,50 +202,54 @@ def show_model_info_worker(model_id, q):
         logging.warning(f"Could not retrieve README for {model_id}. Error: {e}")
         q.put(("model_info_found", f"Could not retrieve README for {model_id}.\n\n{e}"))
 
-def load_model_with_progress(model_id, task, q):
+def load_model_with_progress(model_id, task, q, token=None):
     """Worker thread to load a model with enhanced granular progress reporting."""
     logging.info(f"Starting model load for: {model_id}")
     
     # Import enhanced progress tracking
+    tracker = None
+    set_progress_stage = None
+    ProgressStage = None
+    get_progress_tracker = None
     try:
         from enhanced_progress import set_progress_stage, ProgressStage, get_progress_tracker
         has_enhanced_progress = True
+        tracker = get_progress_tracker()
     except ImportError:
         has_enhanced_progress = False
     
-    if has_enhanced_progress:
-        # Initialize enhanced progress tracking
-        tracker = get_progress_tracker()
+    if has_enhanced_progress and tracker and set_progress_stage and ProgressStage:
         tracker.start_tracking()
         set_progress_stage(ProgressStage.CONNECTING, sub_stage=f"Connecting to Hugging Face Hub for {model_id}")
     
     try:
-        if not is_model_downloaded(model_id):
+        if not is_model_downloaded(model_id, token=token):
             # Send initial status
             q.put(("status_update", f"Starting download of model {model_id}..."))
             logging.info(f"Downloading model files for {model_id}...")
             
-            if has_enhanced_progress:
+            if has_enhanced_progress and set_progress_stage and ProgressStage:
                 set_progress_stage(ProgressStage.DOWNLOADING_MODEL, sub_stage="Getting model information")
 
             # Get model info to calculate total size
-            api = HfApi()
+            api = HfApi(token=token)
             model_info = api.model_info(repo_id=model_id)
             total_model_size = sum(sibling.size for sibling in (model_info.siblings or []) if sibling.size is not None)
 
             q.put(("total_model_size", total_model_size))
             logging.info(f"Total model size for {model_id}: {total_model_size} bytes.")
             
-            if has_enhanced_progress:
+            if has_enhanced_progress and set_progress_stage and ProgressStage:
                 set_progress_stage(ProgressStage.DOWNLOADING_MODEL, sub_stage="Preparing download")
-                tracker.total_bytes = total_model_size
+                if tracker:
+                    tracker.total_bytes = total_model_size
             
             TqdmToQueue.reset_overall_progress()
             TqdmToQueue.set_overall_total_size(total_model_size)
             TqdmToQueue._q = q
             TqdmToQueue._update_type = "model_download_progress"
             
-            if has_enhanced_progress:
+            if has_enhanced_progress and set_progress_stage and ProgressStage:
                 set_progress_stage(ProgressStage.DOWNLOADING_MODEL, sub_stage="Downloading model files")
             
             # Enhanced download progress tracking
@@ -254,6 +258,7 @@ def load_model_with_progress(model_id, task, q):
             
             def enhanced_progress_callback(current_file, bytes_downloaded):
                 """Enhanced progress callback with file-level tracking."""
+                nonlocal downloaded_files
                 downloaded_files += 1
                 
                 # Send enhanced progress update
@@ -268,7 +273,7 @@ def load_model_with_progress(model_id, task, q):
                     'status': f"Downloading {current_file} ({downloaded_files}/{total_files})"
                 })
                 
-                if has_enhanced_progress:
+                if has_enhanced_progress and tracker:
                     tracker.update_download_progress(
                         bytes_downloaded, 
                         total_model_size, 
@@ -280,9 +285,10 @@ def load_model_with_progress(model_id, task, q):
             local_model_path = snapshot_download(
                 repo_id=model_id,
                 tqdm_class=TqdmToQueue, # type: ignore
+                token=token
             )
             
-            if has_enhanced_progress:
+            if has_enhanced_progress and set_progress_stage and ProgressStage:
                 set_progress_stage(ProgressStage.DOWNLOADING_MODEL, sub_stage="Download completed")
             
             logging.info(f"Model download complete for {model_id}.")
@@ -290,7 +296,7 @@ def load_model_with_progress(model_id, task, q):
         else:
             logging.info(f"Model {model_id} is already downloaded.")
             
-            if has_enhanced_progress:
+            if has_enhanced_progress and set_progress_stage and ProgressStage:
                 set_progress_stage(ProgressStage.DOWNLOADING_MODEL, sub_stage="Model already downloaded")
             
             # Get the latest snapshot path
@@ -299,7 +305,7 @@ def load_model_with_progress(model_id, task, q):
             latest_snapshot = os.listdir(snapshot_dir)[-1]
             local_model_path = os.path.join(snapshot_dir, latest_snapshot)
 
-        if has_enhanced_progress:
+        if has_enhanced_progress and tracker and set_progress_stage and ProgressStage:
             set_progress_stage(ProgressStage.LOADING_MODEL, sub_stage="Initializing AI model")
         
         q.put(("status_update", f"Initializing model {model_id}..."))
@@ -320,24 +326,7 @@ def load_model_with_progress(model_id, task, q):
         except Exception:
             # If we can't inspect the config for any reason, proceed to let pipeline raise a clear error.
             pass
-        if has_enhanced_progress:
-            set_progress_stage(ProgressStage.LOADING_MODEL, sub_stage="Loading AI pipeline")
-        
-        # Basic compatibility check: ensure config.json has a model_type for transformers pipelines
-        try:
-            cfg_path = os.path.join(local_model_path, "config.json")
-            if os.path.exists(cfg_path):
-                with open(cfg_path, "r", encoding="utf-8") as cf:
-                    cfg = json.load(cf)
-                if "model_type" not in cfg:
-                    raise ValueError(
-                        f"Model {model_id} does not appear to be a standard transformers model (missing 'model_type' in {cfg_path})."
-                        " The model may require a custom loader (e.g., OpenCLIP/timm) and cannot be loaded with the default pipeline."
-                    )
-        except ValueError:
-            raise
-        except Exception:
-            # If we can't inspect the config for any reason, proceed to let pipeline raise a clear error.
+        if has_enhanced_progress and set_progress_stage and ProgressStage:
             pass
         
         # Try to load tokenizer with failover to slow tokenizer if fast fails (fixes Qwen2-VL local load issue)
@@ -356,7 +345,7 @@ def load_model_with_progress(model_id, task, q):
         else:
             model = pipeline(task, model=local_model_path)
         
-        if has_enhanced_progress:
+        if has_enhanced_progress and set_progress_stage and ProgressStage:
             set_progress_stage(ProgressStage.COMPLETE, sub_stage="Model loaded successfully")
         
         logging.info(f"Model pipeline loaded successfully for: {model_id}")
@@ -365,8 +354,8 @@ def load_model_with_progress(model_id, task, q):
     except Exception as e:
         logging.exception(f"Failed to load model: {model_id}")
         
-        if has_enhanced_progress:
-            get_progress_tracker().mark_error(f"Model loading failed: {e}")
+        if has_enhanced_progress and tracker:
+            tracker.mark_error(f"Model loading failed: {e}")
         
         q.put(("error", f"Failed to load model: {e}"))
 
@@ -401,7 +390,7 @@ def get_model_info(model_id):
         return f"Could not retrieve README for {model_id}.\n\n{e}"
 
 
-def load_model(model_id, task, progress_queue=None):
+def load_model(model_id, task, progress_queue=None, token=None):
     """Synchronous model loader that mirrors the behavior of the worker version.
 
     If `progress_queue` is provided, status updates will be posted to it using
@@ -414,9 +403,9 @@ def load_model(model_id, task, progress_queue=None):
         if q:
             q.put(("status_update", f"Downloading/initializing model {model_id}..."))
 
-        if not is_model_downloaded(model_id):
+        if not is_model_downloaded(model_id, token=token):
             logging.info(f"Downloading model files for {model_id} (sync)...")
-            api = HfApi()
+            api = HfApi(token=token)
             model_info = api.model_info(repo_id=model_id)
             total_model_size = sum(sibling.size for sibling in (model_info.siblings or []) if sibling.size is not None)
             if q:
@@ -431,6 +420,7 @@ def load_model(model_id, task, progress_queue=None):
             local_model_path = snapshot_download(
                 repo_id=model_id,
                 tqdm_class=TqdmToQueue, # type: ignore
+                token=token
             )
             logging.info(f"Model download complete for {model_id} (sync).")
         else:
