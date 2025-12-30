@@ -214,9 +214,9 @@ def show_model_info_worker(model_id, q, token=None):
         logging.warning(f"Could not retrieve README for {model_id}. Error: {e}")
         q.put(("model_info_found", f"Could not retrieve README for {model_id}.\n\n{e}"))
 
-def load_model_with_progress(model_id, task, q, token=None):
+def load_model_with_progress(model_id, task, q, token=None, device=-1):
     """Worker thread to load a model with enhanced granular progress reporting."""
-    logging.info(f"Starting model load for: {model_id}")
+    logging.info(f"Starting model load for: {model_id} on device {device}")
     
     # Import enhanced progress tracking
     tracker = None
@@ -353,9 +353,9 @@ def load_model_with_progress(model_id, task, q, token=None):
                 logging.warning(f"Failed to load tokenizer (fast and slow): {e}")
 
         if tokenizer:
-            model = pipeline(task, model=local_model_path, tokenizer=tokenizer)
+            model = pipeline(task, model=local_model_path, tokenizer=tokenizer, device=device)
         else:
-            model = pipeline(task, model=local_model_path)
+            model = pipeline(task, model=local_model_path, device=device)
         
         if has_enhanced_progress and set_progress_stage and ProgressStage:
             set_progress_stage(ProgressStage.COMPLETE, sub_stage="Model loaded successfully")

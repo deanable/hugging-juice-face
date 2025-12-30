@@ -114,10 +114,13 @@ def load_model_worker(gui_instance, model_id, device=-1):
         task = gui_instance.model_task.get()
         token = gui_instance.config_manager.get('hf_token')
         
-        # Pass device to load_model
-        model = huggingface_utils.load_model(model_id, task, progress_queue=gui_instance.q, token=token, device=device)
+        # Pass device to load_model_with_progress for granular updates
+        # Note: load_model_with_progress handles q.put('model_loaded') internally
+        huggingface_utils.load_model_with_progress(model_id, task, q=gui_instance.q, token=token, device=device)
         
-        gui_instance.q.put({'type': 'model_loaded', 'model': model, 'model_name': model_id})
+        # We don't need to put 'model_loaded' here because load_model_with_progress does it.
+        # But for logging/verification locally:
+        logging.info(f"Model {model_id} load process complete.")
         logging.info(f"Model {model_id} loaded successfully on device {device}.")
     except Exception as e:
         logging.exception(f"Failed to load model {model_id}.")
@@ -321,7 +324,12 @@ def process_images_worker(gui_instance, image_files, categories, keywords, devic
             gui_instance.q.put({'type': 'status_update', 'status': f"Inference on batch {i//batch_size + 1}..."})
             
             # Additional kwargs based on task
-            kwargs = {"batch_size": len(batch_images), "truncation": truncation}
+            kwargs = {"batch_size": len(batch_images)}
+            
+            # Truncation is generally for text inputs, effectively used in Classification/ZeroShot pipelines
+            # but NOT valid for ImageToTextPipeline .__call__ or _sanitize_parameters
+            if model_task != config.MODEL_TASK_IMAGE_TO_TEXT:
+                kwargs["truncation"] = truncation
             
             if model_task == config.MODEL_TASK_IMAGE_CLASSIFICATION:
                 kwargs["candidate_labels"] = categories
@@ -336,11 +344,6 @@ def process_images_worker(gui_instance, image_files, categories, keywords, devic
                 messages = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": "Describe the image."}]}]
                 prompt = gui_instance.model.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
                 # Pipeline call for list of inputs
-                # For VL, inputs are often list of dicts or just prompt/image pairs.
-                # Standard pipeline for image-to-text might just take images if no prompt needed, 
-                # but for chat-based models (Llava/Qwen), we need the prompt structure.
-                # It's tricky to batch prompts + images in the standard pipeline API sometimes.
-                # We'll try passing list of inputs.
                 inputs = [{"image": img, "prompt": prompt} for img in batch_images]
                 kwargs["generate_kwargs"] = {"max_new_tokens": 200}
                 results = gui_instance.model(inputs, **kwargs)
