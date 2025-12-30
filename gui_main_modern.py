@@ -440,6 +440,14 @@ class ModernImageTaggerGUI(ctk.CTk):
         self.model = message['model']
         if self.status_label:
             self.status_label.configure(text=f"✅ Model loaded: {message['model_name']}")
+        
+        # Reset load button state so user can switch models if desired
+        if self.load_model_button:
+            self.load_model_button.configure(
+                text="📥 Load Selected Model",
+                state="normal"
+            )
+            
         logging.info(f"Model loaded successfully: {message['model_name']}")
         gui_handlers.update_step_states(self)
 
@@ -527,6 +535,22 @@ class ModernImageTaggerGUI(ctk.CTk):
         """Handle error message."""
         error_text = message.get('error', 'Unknown error')
         logging.error(f"Processing error: {error_text}")
+
+        # Reset UI element states if error occurred during processing/loading
+        if self.start_button:
+            self.start_button.configure(
+                text="🚀 Start Processing",
+                state="normal",
+                fg_color="green"
+            )
+        if self.stop_button:
+            self.stop_button.configure(state="disabled", fg_color="red")
+            
+        if self.load_model_button:
+             self.load_model_button.configure(
+                text="📥 Load Selected Model",
+                state="normal"
+            )
         
         # Show error in modern dialog
         error_dialog = ctk.CTkToplevel(self)

@@ -1,11 +1,8 @@
-"""
-Modern GUI step components for the Image Tagger using CustomTkinter.
-"""
-
 import customtkinter as ctk
 from pathlib import Path
 import config
 import logging
+import os
 
 
 def create_step1_source(parent, gui_instance):
@@ -518,8 +515,7 @@ def create_step3_config(parent, gui_instance):
     gui_instance.device_status_label = ctk.CTkLabel(
         hw_frame, 
         text=diag_text, 
-        font=ctk.CTkFont(size=10),
-        text_color="gray"
+        font=ctk.CTkFont(size=10)
     )
     gui_instance.device_status_label.pack(side="left", padx=(10, 0))
 
@@ -535,11 +531,23 @@ def create_step3_config(parent, gui_instance):
     )
     cache_btn.pack(side="right", padx=10)
 
+    # Defaults from Settings
+    try:
+        # settings_manager handles user persistence
+        default_batch = gui_instance.settings_manager.get("batch_size", 1)
+        default_trunc = gui_instance.settings_manager.get("truncation", True)
+        default_thresh = gui_instance.settings_manager.get("confidence_threshold", 0.0)
+    except Exception:
+        # Fallback
+        default_batch = 1
+        default_trunc = True
+        default_thresh = 0.0
+
     # Batch Size
     batch_frame = ctk.CTkFrame(config_section, fg_color="transparent")
     batch_frame.pack(fill="x", padx=40, pady=(0, 10))
     
-    gui_instance.batch_size_label = ctk.CTkLabel(batch_frame, text="Batch Size:", width=120, anchor="w")
+    gui_instance.batch_size_label = ctk.CTkLabel(batch_frame, text=f"Batch Size: {default_batch}", width=120, anchor="w")
     gui_instance.batch_size_label.pack(side="left")
     
     gui_instance.batch_size_slider = ctk.CTkSlider(
@@ -564,12 +572,15 @@ def create_step3_config(parent, gui_instance):
     )
     gui_instance.truncation_check.pack(side="left")
     
-    ctk.CTkLabel(param_frame, text="Min Score:", width=80).pack(side="left", padx=(20, 0))
+    thresh_val_label = ctk.CTkLabel(param_frame, text=f"Min Score: {default_thresh:.2f}", width=120)
+    thresh_val_label.pack(side="left", padx=(20, 0))
+    
     gui_instance.threshold_slider = ctk.CTkSlider(
         param_frame,
         from_=0.0,
         to=1.0,
-        width=150
+        width=150,
+        command=lambda v: thresh_val_label.configure(text=f"Min Score: {v:.2f}")
     )
     gui_instance.threshold_slider.pack(side="left", padx=10)
     gui_instance.threshold_slider.set(default_thresh) # Default to no filtering

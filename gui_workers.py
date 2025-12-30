@@ -384,16 +384,16 @@ def process_images_worker(gui_instance, image_files, categories, keywords, devic
             # Process results
             for path, result in zip(current_batch_valid_paths, results):
                 try:
-                    cat, kws = image_processing.extract_tags_from_result(result, model_task, threshold)
+                    cat, kws, desc = image_processing.extract_tags_from_result(result, model_task, threshold)
                     
-                    if cat or kws:
-                        success = image_processing.write_metadata_with_retry(path, cat, kws, gui_instance.q)
+                    if cat or kws or desc:
+                        success = image_processing.write_metadata_with_retry(path, cat, kws, desc, gui_instance.q)
                         if success:
-                            logging.info(f"Tagged {path.name}: {cat} {kws}")
+                            logging.info(f"Tagged {path.name}: Cat='{cat}' Kws={len(kws)} Desc='{desc[:30]}...'")
                         else:
                             error_count += 1
                     else:
-                        logging.info(f"No tags found for {path.name} above threshold {threshold}")
+                        logging.info(f"No meaningful tags/description found for {path.name}")
                         
                     processed_count += 1
                     
