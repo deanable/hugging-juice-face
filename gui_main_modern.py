@@ -369,10 +369,23 @@ class ModernImageTaggerGUI(ctk.CTk):
     def _on_model_loaded(self, message):
         """Handle model loaded message."""
         self.model = message['model']
+        model_name = message['model_name']
+
+        # Mark as downloaded/cached
+        self.downloaded_models.add(model_name)
+
         if self.status_label:
-            self.status_label.configure(text=f"✅ Model loaded: {message['model_name']}")
-        logging.info(f"Model loaded successfully: {message['model_name']}")
+            self.status_label.configure(text=f"✅ Model loaded: {model_name}")
+        logging.info(f"Model loaded successfully: {model_name}")
+
+        # Refresh UI state
         gui_handlers.update_step_states(self)
+
+        # Refresh model list to show "Cached" status and update button text
+        # Only refresh if we have a model list displayed
+        if self.model_listbox and self.all_models:
+             # Just trigger a refresh with current known models
+             gui_handlers.update_model_list(self, list(self.all_models), self.downloaded_models)
 
     def _on_model_download_progress(self, message):
         """Handle model download progress with enhanced tracking."""

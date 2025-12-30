@@ -15,6 +15,32 @@ import config
 import customtkinter as ctk
 
 
+def format_model_name(model_id):
+    """Format model ID into a user-friendly name.
+
+    Args:
+        model_id: Hugging Face model ID (e.g. 'google/vit-base-patch16-224')
+
+    Returns:
+        Formatted name (e.g. 'Vit Base Patch16 224')
+    """
+    if not model_id:
+        return ""
+
+    # Get the repo name part (after /)
+    if "/" in model_id:
+        name = model_id.split("/", 1)[1]
+    else:
+        name = model_id
+
+    # Replace common separators with spaces
+    name = name.replace("-", " ").replace("_", " ")
+
+    # Title case words (simple approach)
+    # Using title() works well for most model names
+    return name.title()
+
+
 def _check_flagged_keywords(text):
     """Check if text contains flagged keywords.
 
@@ -583,9 +609,17 @@ def on_model_selected(gui_instance):
     Args:
         gui_instance: Reference to main GUI instance
     """
-    if gui_instance.load_model_button and gui_instance.selected_model_var.get():
-        gui_instance.load_model_button.configure(state="normal")
-        logging.debug(f"Model selected: {gui_instance.selected_model_var.get()}")
+    model_id = gui_instance.selected_model_var.get()
+    if gui_instance.load_model_button and model_id:
+        # Check if cached to update button text
+        is_cached = model_id in getattr(gui_instance, 'downloaded_models', set())
+
+        button_text = "Load Selected Model" if is_cached else "Download Selected Model"
+        gui_instance.load_model_button.configure(
+            state="normal",
+            text=button_text
+        )
+        logging.debug(f"Model selected: {model_id} (Cached: {is_cached})")
 
 
 def update_model_list(gui_instance, models, downloaded_models):
@@ -609,14 +643,17 @@ def update_model_list(gui_instance, models, downloaded_models):
             model_frame.pack(fill="x", padx=5, pady=5)
 
             is_cached = model_id in downloaded_models
-            cached_text = "✅ Cached" if is_cached else "☁️ Cloud"
+            cached_text = "Cached" if is_cached else "Cloud"
             cached_color = "green" if is_cached else ("gray", "gray")
 
             if is_cached and not auto_select_model:
                 auto_select_model = model_id
 
+            # Format the model name to be user friendly
+            friendly_name = format_model_name(model_id)
+
             radio_args = {
-                "text": f"{model_id}   [{cached_text}]",
+                "text": f"{friendly_name}   [{cached_text}]",
                 "variable": gui_instance.selected_model_var,
                 "value": model_id,
                 "font": ctk.CTkFont(weight="bold"),
@@ -629,9 +666,10 @@ def update_model_list(gui_instance, models, downloaded_models):
             radio_btn = ctk.CTkRadioButton(model_frame, **radio_args)
             radio_btn.pack(anchor="w", padx=10, pady=(10, 5))
 
-            description = ""
+            # Optional: Show original ID in description if desired, or just readiness
+            description = model_id  # Show original ID for clarity
             if is_cached:
-                description = f"✨ Ready to use!"
+                description = f"✨ Ready to use! ({model_id})"
 
             desc_label = ctk.CTkLabel(
                 model_frame,
@@ -645,7 +683,8 @@ def update_model_list(gui_instance, models, downloaded_models):
 
         if auto_select_model:
             gui_instance.selected_model_var.set(auto_select_model)
-            gui_instance.load_model_button.configure(state="normal")
+            # Trigger logic to update button text
+            on_model_selected(gui_instance)
 
         if cached_models:
             gui_instance.find_models_button.configure(
