@@ -30,8 +30,8 @@ MODEL_TASK_IMAGE_TO_TEXT = "image-to-text"
 
 # Task Display Names
 TASK_DISPLAY_MAP = {
-    MODEL_TASK_IMAGE_CLASSIFICATION: "Categories",
-    MODEL_TASK_ZERO_SHOT: "Keywords",
+    MODEL_TASK_IMAGE_CLASSIFICATION: "Keywords (Auto)",
+    MODEL_TASK_ZERO_SHOT: "Categories (Custom)",
     MODEL_TASK_IMAGE_TO_TEXT: "Description"
 }
 

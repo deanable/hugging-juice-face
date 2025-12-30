@@ -457,6 +457,20 @@ class ModernImageTaggerGUI(ctk.CTk):
             )
             
         logging.info(f"Model loaded successfully: {message['model_name']}")
+        
+        # Log supported labels (requested by user)
+        try:
+            # Pipeline -> Model -> Config
+            if hasattr(self.model, 'model') and hasattr(self.model.model, 'config'):
+                config = self.model.model.config
+                if hasattr(config, 'id2label') and config.id2label:
+                    labels = list(config.id2label.values())
+                    logging.info(f"Model supports {len(labels)} labels. First 50: {labels[:50]}")
+                    if len(labels) > 50:
+                        logging.info(f"... and {len(labels)-50} more.")
+        except Exception as e:
+            logging.debug(f"Could not extract label list from model: {e}")
+
         gui_handlers.update_step_states(self)
 
     def _on_model_download_progress(self, message):

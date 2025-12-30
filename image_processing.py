@@ -156,6 +156,14 @@ def write_metadata(image_path: Path, category: str, keywords: List[str], descrip
 
         if keywords:
             existing_keywords_bytes = exif_dict['0th'].get(piexif.ImageIFD.XPKeywords, b'')
+            
+            # Piexif can sometimes return tuple of ints instead of bytes
+            if isinstance(existing_keywords_bytes, tuple):
+                try:
+                    existing_keywords_bytes = bytes(existing_keywords_bytes)
+                except Exception:
+                    existing_keywords_bytes = b''
+            
             existing_keywords_str = existing_keywords_bytes.decode('utf-16le').rstrip('\x00') if existing_keywords_bytes else ''
             existing_keywords = existing_keywords_str.split(';') if existing_keywords_str else []
 
@@ -217,33 +225,48 @@ def extract_tags_from_result(
     description = ""
     
     # Temporary debug logging for troubleshooting
-    if model_task == config.MODEL_TASK_ZERO_SHOT:
+    if model_task == config.MODEL_TASK_IMAGE_CLASSIFICATION:
+        pass # standard classification
+    elif model_task == config.MODEL_TASK_ZERO_SHOT:
         logging.info(f"Extractingtags - Task: {model_task}, Threshold: {threshold}")
         logging.info(f"Raw Result: {str(result)[:200]}...")
 
     try:
         if model_task == config.MODEL_TASK_IMAGE_CLASSIFICATION:
+            # "Keywords (Auto)" - Extract top 5 specific tags
+            # We map this to KEYWORDS now.
             if isinstance(result, list):
-                top_result = max(result, key=lambda x: x['score'])
-                if top_result['score'] >= threshold:
-                    category = top_result['label']
+                # Sort by score descending just in case
+                sorted_res = sorted(result, key=lambda x: x['score'], reverse=True)
+                for item in sorted_res[:5]: # Top 5
+                   if item['score'] >= threshold:
+                       keywords.append(item['label'])
+                       
             elif isinstance(result, dict):
                  if result['score'] >= threshold:
-                    category = result['label']
+                    keywords.append(result['label'])
 
         elif model_task == config.MODEL_TASK_ZERO_SHOT:
+            # "Categories (Custom)" - Extract broad buckets
+            # We map this to CATEGORY (Subject) now.
+            matched_categories = []
+            
             # Handle list of dicts (standard for image zero-shot)
             if isinstance(result, list):
                 for item in result:
                     if isinstance(item, dict) and 'label' in item and 'score' in item:
                         if item['score'] >= threshold:
-                            keywords.append(item['label'])
+                            matched_categories.append(item['label'])
             
             # Handle dict with lists (text-style zero-shot)
             elif isinstance(result, dict) and 'labels' in result and 'scores' in result:
                 for label, score in zip(result['labels'], result['scores']):
                     if score >= threshold:
-                        keywords.append(label)
+                        matched_categories.append(label)
+            
+            if matched_categories:
+                # Join with semicolons for the single Category/Subject field
+                category = "; ".join(matched_categories)
 
         elif model_task == config.MODEL_TASK_IMAGE_TO_TEXT:
             # Result: [{'generated_text': '...'}]

@@ -247,11 +247,13 @@ def update_task_description(gui_instance):
         
         descriptions = {
             config.MODEL_TASK_IMAGE_CLASSIFICATION:
-                "📋 Assigns ONE category to each image from your predefined list (e.g., Interior, Exterior, Furniture)",
+                "📋 Auto-detects specific objects (e.g. tree, car) using standard models. Best for general tagging.",
+            
             config.MODEL_TASK_ZERO_SHOT:
-                "🏷️ Detects MULTIPLE keywords from your list with confidence >90% (e.g., bedroom, modern, sofa)",
+                "🔍 Sorts into your defined buckets (e.g. Indoor, Outdoor). Best for broad categorization.",
+            
             config.MODEL_TASK_IMAGE_TO_TEXT:
-                "✍️ Automatically generates descriptions and extracts keywords (no configuration needed)"
+                "📝 Generates a full sentence description of the image content."
         }
         gui_instance.task_description.configure(text=descriptions.get(task, ""))
     except Exception as e:
