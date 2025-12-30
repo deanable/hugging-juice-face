@@ -14,9 +14,8 @@ pydantic-settings
 transformers
 huggingface_hub
 tqdm
-# Note: 'transformers' requires a backend like PyTorch or TensorFlow.
-# For GPU support, install PyTorch from: https://pytorch.org/
-# Example CPU-only install: pip install torch torchvision torchaudio
+torch
+torchvision
 
 # Daminion Integration (optional, for async client)
 aiohttp

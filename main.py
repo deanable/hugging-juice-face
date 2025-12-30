@@ -39,6 +39,23 @@ if __name__ == "__main__":
     try:
         setup_logging()
         logging.info("Application starting.")
+
+        # Check for PyTorch dependency
+        try:
+            import torch
+        except ImportError:
+            msg = "PyTorch is not installed. Models will not work.\nPlease run: pip install torch torchvision"
+            logging.error(msg)
+            print(f"CRITICAL: {msg}")
+            try:
+                import tkinter
+                from tkinter import messagebox
+                root = tkinter.Tk()
+                root.withdraw()
+                messagebox.showerror("Missing Dependency", msg)
+            except Exception:
+                pass
+            sys.exit(1)
         
         # Check for --gui flag or CUSTOM_GUI environment variable
         gui_mode = os.environ.get('CUSTOM_GUI', '').lower()
