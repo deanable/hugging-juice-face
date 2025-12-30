@@ -21,7 +21,7 @@ GEOMETRY = "800x600"
 
 # --- Model Search ---
 # Limit the number of models returned in search results to avoid UI overload.
-MODEL_SEARCH_LIMIT = 100
+MODEL_SEARCH_LIMIT = 20
 
 # --- Model Tasks ---
 MODEL_TASK_IMAGE_CLASSIFICATION = "image-classification"

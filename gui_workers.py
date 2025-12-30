@@ -102,19 +102,23 @@ def show_model_info_worker(gui_instance, model_id):
         gui_instance.q.put({'type': 'error', 'error': f"Failed to fetch model info: {e}"})
 
 
-def load_model_worker(gui_instance, model_id):
+def load_model_worker(gui_instance, model_id, device=-1):
     """Worker thread for loading model.
 
     Args:
         gui_instance: Reference to main GUI instance
         model_id: Model ID to load
+        device: Device ID (-1 for CPU, 0 for CUDA, "mps" for MPS)
     """
     try:
         task = gui_instance.model_task.get()
         token = gui_instance.config_manager.get('hf_token')
-        model = huggingface_utils.load_model(model_id, task, progress_queue=gui_instance.q, token=token)
+        
+        # Pass device to load_model
+        model = huggingface_utils.load_model(model_id, task, progress_queue=gui_instance.q, token=token, device=device)
+        
         gui_instance.q.put({'type': 'model_loaded', 'model': model, 'model_name': model_id})
-        logging.info(f"Model {model_id} loaded successfully.")
+        logging.info(f"Model {model_id} loaded successfully on device {device}.")
     except Exception as e:
         logging.exception(f"Failed to load model {model_id}.")
         gui_instance.q.put({'type': 'error', 'error': f"Failed to load model: {e}"})
@@ -136,7 +140,7 @@ def find_local_models_worker(gui_instance):
         gui_instance.q.put({'type': 'error', 'error': f"Failed to scan local model cache: {e}"})
 
 
-def process_daminion_worker(gui_instance, categories, keywords, items=None):
+def process_daminion_worker(gui_instance, categories, keywords, items=None, device=-1, batch_size=8, truncation=True, threshold=0.0):
     """Worker thread for processing Daminion items.
 
     Args:
@@ -144,208 +148,228 @@ def process_daminion_worker(gui_instance, categories, keywords, items=None):
         categories: List of categories for classification
         keywords: List of keywords for zero-shot
         items: Pre-filtered items list (optional)
+        device: Device ID (unused here as model is already loaded with device)
+        batch_size: Batch size (unused for now as we process one by one due to API latency)
+        truncation: Whether to truncate inputs
+        threshold: Confidence threshold
     """
     logging.info(f"[GUI] ========== DAMINION PROCESSING WORKER STARTED ==========")
-    logging.info(f"[GUI] Categories: {categories}")
-    logging.info(f"[GUI] Keywords: {keywords}")
-    logging.info(f"[GUI] Pre-filtered items: {len(items) if items else 'None (will fetch all)'}")
+    logging.info(f"[GUI] Params: Batch={batch_size}, Trunc={truncation}, Thr={threshold}")
+    
+    # ... (rest of Daminion logic remains mostly same, but we should use the new threshold)
+    # For now, keeping the existing Daminion logic structure but updating signatures.
+    # Ideally Daminion should also be batched, but that requires refactoring DaminionClient heavily.
+    # We will just use the threshold in the loop.
 
     model_task = gui_instance.model_task.get()
-    logging.info(f"[GUI] Model task: {model_task}")
-
+    
     if not gui_instance.daminion_client:
-        logging.error(f"[GUI] ✗ Daminion client not initialized!")
         gui_instance.q.put({'type': 'error', 'error': "Daminion client not initialized"})
         return
 
     if not gui_instance.model:
-        logging.error(f"[GUI] ✗ Model not loaded!")
         gui_instance.q.put({'type': 'error', 'error': "Model not loaded"})
         return
 
     try:
+        # Fetch items logic...
         if items is None:
-            logging.info(f"[GUI] No pre-filtered items, fetching all from Daminion...")
             gui_instance.q.put({'type': 'status_update', 'status': "Fetching items from Daminion..."})
             items = gui_instance.daminion_client.get_all_items_paginated(batch_size=100, max_items=None)
-            logging.info(f"[GUI] ✓ Fetched {len(items)} items from Daminion")
+        
+        # Flatten and validate...
+        if items:
+            valid_items = []
+            if isinstance(items[0], list):
+                for sublist in items:
+                    if isinstance(sublist, list):
+                        valid_items.extend(sublist)
+                    else:
+                        valid_items.append(sublist)
+            else:
+                valid_items = items
+            items = [item for item in valid_items if isinstance(item, dict)]
 
         if not items:
-            logging.error(f"[GUI] ✗ No items retrieved from Daminion")
-            gui_instance.q.put({'type': 'error', 'error': "No items retrieved from Daminion"})
-            return
-
-        # Ensure items is a list, even if the API call returned None
-        if items is None:
-            items = []
-
-        # Validate and flatten items
-        if items and isinstance(items[0], list):
-            logging.warning(f"[GUI] Items is a list of lists, flattening...")
-            flat_items = []
-            for sublist in items:
-                if isinstance(sublist, list):
-                    flat_items.extend(sublist)
-                else:
-                    flat_items.append(sublist)
-            items = flat_items
-
-        valid_items = [item for item in items if isinstance(item, dict)]
-        items = valid_items
-        logging.info(f"[GUI] Valid items after filtering: {len(items)}")
-
-        if not items:
-            logging.error(f"[GUI] No valid items after validation")
             gui_instance.q.put({'type': 'error', 'error': "No valid items to process"})
             return
 
         gui_instance.q.put({'type': 'progress_max', 'total': len(items)})
-        gui_instance.q.put({'type': 'status_update', 'status': f"Processing {len(items)} items..."})
-
+        
         completed_count = 0
         failed_count = 0
 
-        logging.info(f"[GUI] ========== STARTING ITEM PROCESSING LOOP ==========")
-
         for idx, item in enumerate(items, 1):
             if gui_instance.stop_event.is_set():
-                logging.warning(f"[GUI] Stop event detected, aborting processing")
                 break
 
             try:
                 item_id = item.get('id')
                 filename = item.get('fileName', f'item_{item_id}')
-
-                logging.info(f"[GUI] --- Processing item {idx}/{len(items)}: {filename} (ID: {item_id}) ---")
                 gui_instance.q.put({'type': 'status_update', 'status': f"Processing {filename}..."})
-
+                
                 thumb_path = gui_instance.daminion_client.download_thumbnail(item_id)
-
                 if not thumb_path or not thumb_path.exists():
-                    logging.error(f"[GUI] ✗ Failed to download thumbnail for item {item_id}")
                     failed_count += 1
                     continue
 
                 image = Image.open(thumb_path)
-                result = None
-
+                
+                # Use pipeline directly (simulating single item batch)
+                # Note: Model is already on device.
+                
                 if model_task == config.MODEL_TASK_IMAGE_CLASSIFICATION:
                     result = gui_instance.model(image, candidate_labels=categories)
-                    if result:
-                        category = result[0]['label']
-                        confidence = result[0]['score']
-                        logging.info(f"[GUI] ✓ Item {item_id}: Category={category} (confidence={confidence:.2f})")
-                        gui_instance.daminion_client.update_item_metadata(str(item_id), category=category)
+                    # Use helper
+                    cat, _ = image_processing.extract_tags_from_result(result, model_task, threshold)
+                    if cat:
+                        logging.info(f"[GUI] ✓ Item {item_id}: Category={cat}")
+                        gui_instance.daminion_client.update_item_metadata(str(item_id), category=cat)
 
                 elif model_task == config.MODEL_TASK_ZERO_SHOT:
                     result = gui_instance.model(image, candidate_labels=keywords)
-                    if result:
-                        detected_keywords = [r['label'] for r in result if r['score'] > 0.9]
-                        if detected_keywords:
-                            logging.info(f"[GUI] ✓ Item {item_id}: Keywords={detected_keywords}")
-                            gui_instance.daminion_client.update_item_metadata(
-                                str(item_id), keywords=detected_keywords
-                            )
+                    _, kws = image_processing.extract_tags_from_result(result, model_task, threshold)
+                    if kws:
+                        logging.info(f"[GUI] ✓ Item {item_id}: Keywords={kws}")
+                        gui_instance.daminion_client.update_item_metadata(str(item_id), keywords=kws)
 
                 elif model_task == config.MODEL_TASK_IMAGE_TO_TEXT:
-                    # For VL models like Qwen, providing a prompt is often necessary.
-                    # We pass the image and a generic prompt to guide the generation.
-                    messages = [
-                        {"role": "user", "content": [{"type": "image"}, {"type": "text", "text": "Describe the image."}]},
-                    ]
+                    # Provide prompt for VL models
+                    messages = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": "Describe the image."}]}]
                     prompt = gui_instance.model.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
                     result = gui_instance.model(image, prompt=prompt, generate_kwargs={"max_new_tokens": 200})
-                    if result and len(result) > 0:
-                        generated_text = result[0][0].get('generated_text', '')
-                        generated_keywords = [w.strip() for w in generated_text.split(',') if len(w.strip()) > 2][:15]
-                        logging.info(f"[GUI] ✓ Item {item_id}: Generated keywords={generated_keywords}")
-                        gui_instance.daminion_client.update_item_metadata(
-                            str(item_id), keywords=generated_keywords
-                        )
+                    _, kws = image_processing.extract_tags_from_result(result, model_task, threshold)
+                    if kws:
+                        logging.info(f"[GUI] ✓ Item {item_id}: Generated={kws}")
+                        gui_instance.daminion_client.update_item_metadata(str(item_id), keywords=kws)
 
                 completed_count += 1
-                logging.info(f"[GUI] ✓ Item {idx}/{len(items)} processed successfully")
                 gui_instance.q.put({'type': 'progress', 'current': completed_count, 'total': len(items)})
 
             except Exception as e:
                 failed_count += 1
-                logging.exception(f"[GUI] ✗ Error processing Daminion item {item.get('id')}")
-                gui_instance.q.put({'type': 'error', 'error': f"Failed to process item: {e}"})
-
-        logging.info(f"[GUI] ========== ITEM PROCESSING LOOP COMPLETE ==========")
-        logging.info(f"[GUI] Total processed: {completed_count}")
-        logging.info(f"[GUI] Total failed: {failed_count}")
+                logging.exception(f"[GUI] Error processing item {item.get('id')}")
 
         gui_instance.daminion_client.cleanup_temp_files()
-        gui_instance.q.put({
-            'type': 'progress_done', 
-            'status': f"Finished processing {completed_count} Daminion items.",
-            'processed_count': completed_count,
-            'error_count': failed_count
-        })
-        logging.info(f"[GUI] ========== DAMINION PROCESSING WORKER COMPLETE ==========")
+        gui_instance.q.put({'type': 'progress_done', 'processed_count': completed_count, 'error_count': failed_count})
 
     except Exception as e:
-        logging.exception(f"[GUI] ✗ CRITICAL: Daminion processing worker failed")
+        logging.exception(f"[GUI] Daminion processing failed")
         gui_instance.q.put({'type': 'error', 'error': f"Daminion processing failed: {e}"})
 
 
-def process_images_worker(gui_instance, image_files, categories, keywords):
-    """Worker thread for processing local images.
+def process_images_worker(gui_instance, image_files, categories, keywords, device=-1, batch_size=8, truncation=True, threshold=0.0):
+    """Worker thread for processing local images using batch processing.
 
     Args:
         gui_instance: Reference to main GUI instance
         image_files: List of image file paths
         categories: List of categories for classification
         keywords: List of keywords for zero-shot
+        device: Device ID (unused here as model is already loaded with device)
+        batch_size: Batch size for inference
+        truncation: Whether to truncate inputs
+        threshold: Confidence threshold
     """
-    logging.info("Image processing worker started.")
+    logging.info(f"Image processing worker started. Batch size: {batch_size}")
     model_task = gui_instance.model_task.get()
-    max_workers = gui_instance.config_manager.get('max_concurrent_workers', 4)
-
+    
+    total_images = len(image_files)
     completed_count = 0
     error_count = 0
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_image = {
-            executor.submit(
-                image_processing.process_single_image,
-                image_path, gui_instance.model, model_task, categories, keywords, gui_instance.q
-            ): image_path for image_path in image_files
-        }
+    
+    gui_instance.q.put({'type': 'progress_max', 'total': total_images})
+    gui_instance.q.put({'type': 'status_update', 'status': f"Processing {total_images} images..."})
 
-        for future in as_completed(future_to_image):
-            image_path = future_to_image[future]
-            start_time = time.time()
-            completed_count += 1
-            gui_instance.q.put({'type': 'progress', 'current': completed_count, 'total': len(image_files)})
-
+    # Prepare batches
+    for i in range(0, total_images, batch_size):
+        if gui_instance.stop_event.is_set():
+            break
+            
+        batch_paths = image_files[i : i + batch_size]
+        batch_images = []
+        valid_paths = []
+        
+        # Load images for batch
+        for path in batch_paths:
             try:
-                success, error = future.result()
-                processing_time = time.time() - start_time
-
-                if success:
-                    gui_instance.progress_tracker.mark_processed(image_path)
-                    gui_instance.report.add_result(
-                        str(image_path), "", [], True, None, processing_time
-                    )
+                # Validation
+                valid, _ = image_processing.validate_image(path)
+                if valid:
+                    # Open and convert to RGB
+                    img = Image.open(path)
+                    if img.mode not in ('RGB', 'RGBA', 'L'):
+                        img = img.convert('RGB')
+                    batch_images.append(img)
+                    valid_paths.append(path)
                 else:
                     error_count += 1
-                    error_msg = error or "Unknown error"
-                    gui_instance.progress_tracker.mark_failed(image_path, error_msg)
-                    gui_instance.report.add_result(
-                        str(image_path), "", [], False, error_msg, processing_time
-                    )
-
+                    logging.warning(f"Skipping invalid image: {path}")
             except Exception as e:
                 error_count += 1
-                logging.exception(f"Error processing {image_path.name} in worker.")
-                error_msg = str(e)
-                processing_time = time.time() - start_time
+                logging.error(f"Failed to load image {path}: {e}")
 
-                gui_instance.progress_tracker.mark_failed(image_path, error_msg)
-                gui_instance.report.add_result(
-                    str(image_path), "", [], False, error_msg, processing_time
-                )
+        if not batch_images:
+            continue
+
+        try:
+            # Run inference on batch
+            # Note: We pass the list of PIL images directly to the pipeline.
+            # Transformers pipeline handles batching internally if we pass a list, 
+            # but we are doing the chunking ourselves to update UI.
+            
+            gui_instance.q.put({'type': 'status_update', 'status': f"Inference on batch {i//batch_size + 1}..."})
+            
+            # Additional kwargs based on task
+            kwargs = {"batch_size": len(batch_images), "truncation": truncation}
+            
+            if model_task == config.MODEL_TASK_IMAGE_CLASSIFICATION:
+                kwargs["candidate_labels"] = categories
+                results = gui_instance.model(batch_images, **kwargs)
+                
+            elif model_task == config.MODEL_TASK_ZERO_SHOT:
+                kwargs["candidate_labels"] = keywords
+                results = gui_instance.model(batch_images, **kwargs)
+                
+            elif model_task == config.MODEL_TASK_IMAGE_TO_TEXT:
+                # Need prompts for each image
+                messages = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": "Describe the image."}]}]
+                prompt = gui_instance.model.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+                # Pipeline call for list of inputs
+                # For VL, inputs are often list of dicts or just prompt/image pairs.
+                # Standard pipeline for image-to-text might just take images if no prompt needed, 
+                # but for chat-based models (Llava/Qwen), we need the prompt structure.
+                # It's tricky to batch prompts + images in the standard pipeline API sometimes.
+                # We'll try passing list of inputs.
+                inputs = [{"image": img, "prompt": prompt} for img in batch_images]
+                kwargs["generate_kwargs"] = {"max_new_tokens": 200}
+                results = gui_instance.model(inputs, **kwargs)
+
+            # Process results
+            for path, result in zip(valid_paths, results):
+                try:
+                    cat, kws = image_processing.extract_tags_from_result(result, model_task, threshold)
+                    
+                    if cat or kws:
+                        success = image_processing.write_metadata_with_retry(path, cat, kws, gui_instance.q)
+                        if success:
+                            logging.info(f"Tagged {path.name}: {cat} {kws}")
+                        else:
+                            error_count += 1
+                    else:
+                        logging.info(f"No tags found for {path.name} above threshold {threshold}")
+                        
+                    completed_count += 1
+                    
+                except Exception as write_err:
+                    error_count += 1
+                    logging.error(f"Error writing metadata for {path}: {write_err}")
+
+            gui_instance.q.put({'type': 'progress', 'current': completed_count, 'total': total_images})
+
+        except Exception as e:
+            logging.exception(f"Batch inference failed: {e}")
+            error_count += len(batch_images)
 
     gui_instance.progress_tracker.complete_job()
     gui_instance.q.put({

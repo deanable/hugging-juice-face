@@ -118,13 +118,25 @@ def get_downloaded_models(task, token=None):
 
 def find_models_worker(task, q, token=None):
     """Worker thread to fetch model list from Hugging Face Hub."""
-    logging.info(f"Searching for models with task: '{task}'")
+    logging.info(f"Worker searching for top {config.MODEL_SEARCH_LIMIT} models with task: '{task}'")
     try:
         # Request the top N models by downloads to keep the UI responsive.
         models = list_models(filter=task, sort="downloads", direction=-1, limit=config.MODEL_SEARCH_LIMIT, token=token)
-        model_ids = [model.id for model in models or []][:config.MODEL_SEARCH_LIMIT]
-        downloaded_models = [model_id for model_id in model_ids if is_model_downloaded(model_id, token=token)]
-        logging.info(f"Found {len(model_ids)} models.")
+        all_found = [m.id for m in models or []]
+        
+        logging.info(f"Hub returned {len(all_found)} raw models: {all_found}")
+        
+        model_ids = all_found[:config.MODEL_SEARCH_LIMIT]
+        logging.info(f"Filtering to top {len(model_ids)}: {model_ids}")
+
+        downloaded_models = []
+        for model_id in model_ids:
+             is_down = is_model_downloaded(model_id, token=token)
+             logging.info(f"Checking if {model_id} is downloaded: {is_down}")
+             if is_down:
+                 downloaded_models.append(model_id)
+        
+        logging.info(f"Final list to GUI - Found: {len(model_ids)}, Downloaded: {len(downloaded_models)}")
         q.put(("models_found", (model_ids, downloaded_models)))
     except Exception as e:
         logging.exception("Failed to find models.")
@@ -390,18 +402,18 @@ def get_model_info(model_id):
         return f"Could not retrieve README for {model_id}.\n\n{e}"
 
 
-def load_model(model_id, task, progress_queue=None, token=None):
+def load_model(model_id, task, progress_queue=None, token=None, device=-1):
     """Synchronous model loader that mirrors the behavior of the worker version.
 
     If `progress_queue` is provided, status updates will be posted to it using
     the same message types the GUI expects.
     Returns the initialized pipeline object.
     """
-    logging.info(f"Starting synchronous model load for: {model_id}")
+    logging.info(f"Starting synchronous model load for: {model_id} on device {device}")
     try:
         q = progress_queue
         if q:
-            q.put(("status_update", f"Downloading/initializing model {model_id}..."))
+            q.put(("status_update", f"Downloading/initializing model {model_id} on device {device}..."))
 
         if not is_model_downloaded(model_id, token=token):
             logging.info(f"Downloading model files for {model_id} (sync)...")
@@ -460,13 +472,11 @@ def load_model(model_id, task, progress_queue=None, token=None):
                 logging.warning(f"Failed to load tokenizer (fast and slow): {e}")
         
         if tokenizer:
-            model = pipeline(task, model=local_model_path, tokenizer=tokenizer)
+            model = pipeline(task, model=local_model_path, tokenizer=tokenizer, device=device)
         else:
-            model = pipeline(task, model=local_model_path)
+            model = pipeline(task, model=local_model_path, device=device)
 
-        logging.info(f"Model pipeline loaded successfully (with pre-loaded tokenizer) for: {model_id} (sync)")
-        return model
-        logging.info(f"Model pipeline loaded successfully for: {model_id} (sync)")
+        logging.info(f"Model pipeline loaded successfully (with pre-loaded tokenizer) for: {model_id} (sync) on device {device}")
         return model
 
     except Exception as e:

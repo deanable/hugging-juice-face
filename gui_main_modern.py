@@ -33,6 +33,32 @@ from enhanced_progress_display import create_enhanced_progress_display, setup_en
 from enhanced_progress import get_progress_tracker, ProgressStage, set_progress_stage
 
 
+class TextHandler(logging.Handler):
+    """
+    Custom logging handler that sends messages to a Tkinter Text widget.
+    """
+    def __init__(self, text_widget):
+        logging.Handler.__init__(self)
+        self.text_widget = text_widget
+
+    def emit(self, record):
+        msg = self.format(record)
+        def append():
+            try:
+                self.text_widget.configure(state='normal')
+                self.text_widget.insert("end", msg + '\n')
+                self.text_widget.see("end")
+                self.text_widget.configure(state='disabled')
+            except Exception:
+                pass
+        # Schedule the update on the main UI thread
+        try:
+            self.text_widget.after(0, append)
+        except Exception:
+            pass
+
+
+
 class ModernImageTaggerGUI(ctk.CTk):
     """Main application window with step-by-step workflow using CustomTkinter."""
 
@@ -96,6 +122,19 @@ class ModernImageTaggerGUI(ctk.CTk):
         
         # Theme toggle button
         self.theme_button: Optional[ctk.CTkButton] = None
+        
+        # New Config Widgets
+        self.device_var: Optional[ctk.StringVar] = None
+        self.device_selector: Optional[ctk.CTkSegmentedButton] = None
+        self.batch_size_slider: Optional[ctk.CTkSlider] = None
+        self.batch_size_label: Optional[ctk.CTkLabel] = None
+        self.truncation_var: Optional[ctk.BooleanVar] = None
+        self.truncation_check: Optional[ctk.CTkCheckBox] = None
+        self.threshold_slider: Optional[ctk.CTkSlider] = None
+        
+        # New Log Widget
+        self.log_box: Optional[ctk.CTkTextbox] = None
+        self.log_handler: Optional[TextHandler] = None
 
         self._create_widgets()
         self._create_menu()
@@ -114,6 +153,15 @@ class ModernImageTaggerGUI(ctk.CTk):
 
         self.after(100, self.process_queue)
         self.after(200, self.scan_local_models)  # Scan for local models on startup
+        
+        # Setup logging handler for UI
+        if self.log_box:
+            self.log_handler = TextHandler(self.log_box)
+            formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%H:%M:%S')
+            self.log_handler.setFormatter(formatter)
+            logging.getLogger().addHandler(self.log_handler)
+            logging.info("GUI Logging initialized.")
+            
         logging.info("Modern GUI initialized with step-by-step workflow.")
 
     def _create_menu(self):
@@ -521,15 +569,41 @@ class ModernImageTaggerGUI(ctk.CTk):
 
         Stores models organized by task type for efficient filtering.
         """
-        model_ids, downloaded = data
-        self.all_models.update(model_ids)
-        self.downloaded_models.update(downloaded)
+        # Robust unpacking
+        model_ids = []
+        downloaded = []
+        
+        if isinstance(data, (tuple, list)) and len(data) >= 2:
+            model_ids, downloaded = data[0], data[1]
+        elif isinstance(data, dict):
+            # Handle dictionary format (e.g. from gui_workers.py)
+            # data = {'type': 'models_found', 'models': (ids, down)}
+            payload = data.get('models')
+            if isinstance(payload, (tuple, list)) and len(payload) >= 2:
+                model_ids, downloaded = payload[0], payload[1]
+            else:
+                # Fallback purely for backward compatibility or direct list usage
+                model_ids = data.get('models', [])
+                downloaded = data.get('downloaded', [])
+        else:
+            logging.error(f"Invalid models_found data format: {type(data)}")
+            return
 
-        # Get current task and store models for this task
         current_task = self.model_task.get() if self.model_task else config.MODEL_TASK_IMAGE_CLASSIFICATION
         if current_task not in self.all_models_with_tasks:
             self.all_models_with_tasks[current_task] = set()
-        self.all_models_with_tasks[current_task].update(model_ids)
+        # Update set with robust error handling
+        if model_ids:
+            # Flatten or filter if needed? No, likely model_ids is list of strings
+            # But just in case any item is unhashable, use a safeguard
+            valid_ids = []
+            for m_id in model_ids:
+                if isinstance(m_id, str):
+                    valid_ids.append(m_id)
+                else:
+                    logging.warning(f"Skipping unhashable model_id of type {type(m_id)}: {m_id}")
+            
+            self.all_models_with_tasks[current_task].update(valid_ids)
 
         # Use the centralized update function
         gui_handlers.update_model_list(self, list(model_ids), downloaded)

@@ -481,19 +481,78 @@ def create_step3_config(parent, gui_instance):
 
     config_label = ctk.CTkLabel(
         config_section,
-        text="📋 Configuration Summary",
+        text="⚙️ Advanced Configuration",
         font=ctk.CTkFont(size=14, weight="bold")
     )
     config_label.pack(anchor="w", padx=20, pady=(15, 10))
 
-    gui_instance.config_summary = ctk.CTkLabel(
-        config_section,
-        text="Configure your tagging parameters above",
-        text_color="gray",
-        wraplength=600,
-        justify="left"
+    # Hardware Selection
+    hw_frame = ctk.CTkFrame(config_section, fg_color="transparent")
+    hw_frame.pack(fill="x", padx=40, pady=(0, 10))
+    ctk.CTkLabel(hw_frame, text="Compute Device:", width=120, anchor="w").pack(side="left")
+    
+    # Check available devices
+    import torch
+    devices = ["CPU"]
+    if torch.cuda.is_available():
+        devices.append("CUDA")
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        devices.append("MPS")
+        
+    gui_instance.device_var = ctk.StringVar(value="CPU" if "CPU" in devices else devices[0])
+    gui_instance.device_selector = ctk.CTkSegmentedButton(
+        hw_frame,
+        values=devices,
+        variable=gui_instance.device_var
     )
-    gui_instance.config_summary.pack(anchor="w", padx=40, pady=(0, 15))
+    gui_instance.device_selector.pack(side="left", padx=(10, 0), fill="x", expand=True)
+    if "CUDA" in devices:
+        gui_instance.device_var.set("CUDA")
+    elif "MPS" in devices:
+        gui_instance.device_var.set("MPS")
+
+    # Batch Size
+    batch_frame = ctk.CTkFrame(config_section, fg_color="transparent")
+    batch_frame.pack(fill="x", padx=40, pady=(0, 10))
+    ctk.CTkLabel(batch_frame, text="Batch Size:", width=120, anchor="w").pack(side="left")
+    
+    gui_instance.batch_size_label = ctk.CTkLabel(batch_frame, text="8", width=30)
+    gui_instance.batch_size_label.pack(side="right", padx=(10, 0))
+    
+    def update_batch_label(value):
+        gui_instance.batch_size_label.configure(text=str(int(value)))
+        
+    gui_instance.batch_size_slider = ctk.CTkSlider(
+        batch_frame,
+        from_=1,
+        to=64,
+        number_of_steps=63,
+        command=update_batch_label
+    )
+    gui_instance.batch_size_slider.pack(side="left", padx=(10, 0), fill="x", expand=True)
+    gui_instance.batch_size_slider.set(8)
+
+    # Threshold & Truncation
+    param_frame = ctk.CTkFrame(config_section, fg_color="transparent")
+    param_frame.pack(fill="x", padx=40, pady=(0, 15))
+    
+    gui_instance.truncation_var = ctk.BooleanVar(value=True)
+    gui_instance.truncation_check = ctk.CTkCheckBox(
+        param_frame,
+        text="Truncate Inputs (prevent errors on long text)",
+        variable=gui_instance.truncation_var
+    )
+    gui_instance.truncation_check.pack(side="left")
+    
+    ctk.CTkLabel(param_frame, text="Min Score:", width=80).pack(side="left", padx=(20, 0))
+    gui_instance.threshold_slider = ctk.CTkSlider(
+        param_frame,
+        from_=0.0,
+        to=1.0,
+        width=150
+    )
+    gui_instance.threshold_slider.pack(side="left", padx=10)
+    gui_instance.threshold_slider.set(0.0) # Default to no filtering
 
     # Status indicator
     gui_instance.step3_status = ctk.CTkLabel(
@@ -564,37 +623,23 @@ def create_step4_process(parent, gui_instance):
     )
     gui_instance.stop_button.pack(side="left")
 
-    # Processing info
-    info_frame = ctk.CTkFrame(control_section, fg_color="transparent")
-    info_frame.pack(fill="x", padx=40, pady=(0, 15))
-
-    gui_instance.processing_info_label = ctk.CTkLabel(
-        info_frame,
-        text="Ready to start processing images with AI",
-        text_color="gray"
-    )
-    gui_instance.processing_info_label.pack(anchor="w")
-
-    # Settings section
-    settings_section = ctk.CTkFrame(main_frame)
-    settings_section.pack(fill="x", pady=(0, 20))
-
-    settings_label = ctk.CTkLabel(
-        settings_section,
-        text="⚙️ Processing Settings",
+    # Log Output Section
+    log_section = ctk.CTkFrame(main_frame)
+    log_section.pack(fill="both", expand=True, pady=(0, 20))
+    
+    log_label = ctk.CTkLabel(
+        log_section,
+        text="📜 Execution Log",
         font=ctk.CTkFont(size=14, weight="bold")
     )
-    settings_label.pack(anchor="w", padx=20, pady=(15, 10))
-
-    # Settings info
-    gui_instance.settings_info = ctk.CTkLabel(
-        settings_section,
-        text="Settings will be loaded from configuration",
-        text_color="gray",
-        wraplength=600,
-        justify="left"
+    log_label.pack(anchor="w", padx=20, pady=(10, 5))
+    
+    gui_instance.log_box = ctk.CTkTextbox(
+        log_section,
+        font=ctk.CTkFont(family="Consolas", size=11)
     )
-    gui_instance.settings_info.pack(anchor="w", padx=40, pady=(0, 15))
+    gui_instance.log_box.pack(fill="both", expand=True, padx=20, pady=(0, 20))
+    gui_instance.log_box.configure(state="disabled")
 
     # Status indicator
     gui_instance.step4_status = ctk.CTkLabel(

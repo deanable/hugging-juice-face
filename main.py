@@ -57,30 +57,13 @@ if __name__ == "__main__":
                 pass
             sys.exit(1)
         
-        # Check for --gui flag or CUSTOM_GUI environment variable
-        gui_mode = os.environ.get('CUSTOM_GUI', '').lower()
-        
-        if len(sys.argv) > 1:
-            if sys.argv[1] == '--modern':
-                gui_mode = 'modern'
-            elif sys.argv[1] == '--original':
-                gui_mode = 'original'
-        
-        # Default to modern GUI, fallback to original if issues
-        if gui_mode == 'original':
-            print("Starting with original Tkinter GUI...")
-            main_original()
-        elif gui_mode == 'modern' or not gui_mode:
-            try:
-                print("Starting with modern CustomTkinter GUI...")
-                main_modern()
-            except Exception as e:
-                print(f"Modern GUI failed: {e}")
-                print("Falling back to original Tkinter GUI...")
-                logging.warning(f"Modern GUI failed, falling back: {e}")
-                main_original()
-        else:
-            print("Usage: python main.py [--modern|--original]")
+        # Default to modern GUI
+        try:
+            print("Starting modern CustomTkinter GUI...")
+            main_modern()
+        except Exception as e:
+            print(f"Modern GUI failed: {e}")
+            logging.error(f"Modern GUI failed: {e}")
             sys.exit(1)
             
         logging.info("Application closed.")

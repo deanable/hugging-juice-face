@@ -282,3 +282,66 @@ def process_single_image(
     success = write_metadata_with_retry(image_path, category, new_keywords, q)
 
     return success, None if success else "Metadata write failed"
+
+
+def extract_tags_from_result(
+    result: Any,
+    model_task: str,
+    threshold: float = 0.0,
+    stop_words: Optional[List[str]] = None
+) -> Tuple[str, List[str]]:
+    """
+    Extract category and keywords from a single model result.
+
+    Args:
+        result: The output from the pipeline for a single item
+        model_task: Task type
+        threshold: Confidence threshold
+        stop_words: List of words to ignore (for image-to-text)
+
+    Returns:
+        Tuple of (category, keywords)
+    """
+    category = ""
+    keywords = []
+
+    try:
+        if model_task == config.MODEL_TASK_IMAGE_CLASSIFICATION:
+            # Result is usually a list of dicts [{'label': 'X', 'score': 0.9}, ...]
+            # or a single dict if top_k=1? Pipeline usually returns list.
+            if isinstance(result, list):
+                top_result = max(result, key=lambda x: x['score'])
+                if top_result['score'] >= threshold:
+                    category = top_result['label']
+            elif isinstance(result, dict):
+                 if result['score'] >= threshold:
+                    category = result['label']
+
+        elif model_task == config.MODEL_TASK_ZERO_SHOT:
+            # Result: {'sequence': '...', 'labels': [], 'scores': []}
+            # Or list of results if multiple images? This function handles SINGLE result.
+            if isinstance(result, dict) and 'labels' in result and 'scores' in result:
+                for label, score in zip(result['labels'], result['scores']):
+                    if score >= threshold:
+                        keywords.append(label)
+
+        elif model_task == config.MODEL_TASK_IMAGE_TO_TEXT:
+            # Result: [{'generated_text': '...'}]
+            text = ""
+            if isinstance(result, list) and len(result) > 0:
+                text = result[0].get('generated_text', '')
+            elif isinstance(result, dict):
+                text = result.get('generated_text', '')
+            
+            if text:
+                # Simple keyword extraction strategy
+                stop_words = stop_words or config.STOP_WORDS
+                keywords = [
+                    w.strip() for w in text.split(',')
+                    if len(w.strip()) > 2 and w.strip().lower() not in stop_words
+                ][:config.MAX_KEYWORDS_PER_IMAGE]
+
+    except Exception as e:
+        logging.error(f"Error extracting tags from result: {e}")
+
+    return category, keywords

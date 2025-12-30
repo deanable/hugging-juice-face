@@ -687,11 +687,16 @@ def on_load_model(gui_instance):
             text="⏳ Loading...",
             state="disabled"
         )
+        
+        # Get selected device
+        device_name = gui_instance.device_var.get() if gui_instance.device_var else "CPU"
+        device_map = {"CPU": -1, "CUDA": 0, "MPS": "mps"}
+        device = device_map.get(device_name, -1)
 
         # Start model loading in worker thread
         thread = threading.Thread(
             target=gui_workers.load_model_worker,
-            args=(gui_instance, selected_model),
+            args=(gui_instance, selected_model, device),
             daemon=True
         )
         thread.start()
@@ -723,14 +728,23 @@ def on_start_processing(gui_instance):
         categories = [c.strip() for c in gui_instance.categories_entry.get().split(',') if c.strip()]
         keywords = [k.strip() for k in gui_instance.keywords_entry.get().split(',') if k.strip()]
 
+        # Get Advanced Config
+        device = gui_instance.device_var.get() if gui_instance.device_var else "CPU"
+        batch_size = int(gui_instance.batch_size_slider.get()) if gui_instance.batch_size_slider else 8
+        truncation = gui_instance.truncation_var.get() if gui_instance.truncation_var else True
+        threshold = gui_instance.threshold_slider.get() if gui_instance.threshold_slider else 0.0
+
+        logging.info(f"Starting processing with Device={device}, Batch={batch_size}, Trunc={truncation}, Thr={threshold}")
+
         # Determine target worker
         if gui_instance.processing_mode == "local":
             image_files = scan_image_directory(gui_instance.image_dir)
             target_worker = gui_workers.process_images_worker
-            worker_args = (gui_instance, image_files, categories, keywords)
+            worker_args = (gui_instance, image_files, categories, keywords, device, batch_size, truncation, threshold)
         else: # daminion
             target_worker = gui_workers.process_daminion_worker
-            worker_args = (gui_instance, categories, keywords)
+            # Daminion worker signature update
+            worker_args = (gui_instance, categories, keywords, None, device, batch_size, truncation, threshold)
 
         # Start processing in worker thread
         thread = threading.Thread(
