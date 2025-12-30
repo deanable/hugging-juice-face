@@ -319,6 +319,10 @@ def process_images_worker(gui_instance, image_files, categories, keywords, devic
     
     gui_instance.q.put({'type': 'progress_max', 'total': total_images})
     gui_instance.q.put({'type': 'status_update', 'status': f"Processing {total_images} images..."})
+    
+    logging.info(f"Debug: Worker received Categories={len(categories)}, Keywords={len(keywords)}")
+    if keywords:
+        logging.info(f"Debug: Keywords: {keywords}")
 
     # Prepare batches
     for i in range(0, total_images, batch_size):
@@ -369,11 +373,12 @@ def process_images_worker(gui_instance, image_files, categories, keywords, devic
             # Additional kwargs based on task
             kwargs = {"batch_size": len(batch_images)}
             
-            if model_task != config.MODEL_TASK_IMAGE_TO_TEXT:
-                kwargs["truncation"] = truncation
+            # Truncation is generally for text tokenization, not needed for pure image classification pipelines.
+            # We remove it to avoid TypeError.
             
             if model_task == config.MODEL_TASK_IMAGE_CLASSIFICATION:
-                kwargs["candidate_labels"] = categories
+                # Standard classification models (ViT, ResNet) do not support candidate_labels.
+                # They output fixed classes (e.g. ImageNet).
                 results = gui_instance.model(batch_images, **kwargs)
                 
             elif model_task == config.MODEL_TASK_ZERO_SHOT:

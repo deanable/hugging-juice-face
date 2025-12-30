@@ -215,6 +215,11 @@ def extract_tags_from_result(
     category = ""
     keywords = []
     description = ""
+    
+    # Temporary debug logging for troubleshooting
+    if model_task == config.MODEL_TASK_ZERO_SHOT:
+        logging.info(f"Extractingtags - Task: {model_task}, Threshold: {threshold}")
+        logging.info(f"Raw Result: {str(result)[:200]}...")
 
     try:
         if model_task == config.MODEL_TASK_IMAGE_CLASSIFICATION:
@@ -227,7 +232,15 @@ def extract_tags_from_result(
                     category = result['label']
 
         elif model_task == config.MODEL_TASK_ZERO_SHOT:
-            if isinstance(result, dict) and 'labels' in result and 'scores' in result:
+            # Handle list of dicts (standard for image zero-shot)
+            if isinstance(result, list):
+                for item in result:
+                    if isinstance(item, dict) and 'label' in item and 'score' in item:
+                        if item['score'] >= threshold:
+                            keywords.append(item['label'])
+            
+            # Handle dict with lists (text-style zero-shot)
+            elif isinstance(result, dict) and 'labels' in result and 'scores' in result:
                 for label, score in zip(result['labels'], result['scores']):
                     if score >= threshold:
                         keywords.append(label)
