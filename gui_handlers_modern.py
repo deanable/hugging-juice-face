@@ -800,14 +800,28 @@ def on_select_directory(gui_instance):
 
 
 def on_refresh_collections(gui_instance):
-    """Handle refresh collections button click."""
-    # This would refresh the Daminion collections
-    show_modern_messagebox(
-        gui_instance,
-        "Collections",
-        "Collections refreshed",
-        "info"
-    )
+    """Handle refresh collections button click (Async)."""
+    try:
+        if not gui_instance.daminion_client:
+            show_modern_messagebox(gui_instance, "Connection Required", "Please connect to Daminion first.", "warning")
+            return
+
+        # Disable button to prevent spamming
+        if gui_instance.refresh_collections_btn:
+            gui_instance.refresh_collections_btn.configure(state="disabled", text="Refreshing...")
+
+        # Start refresh in worker thread
+        thread = threading.Thread(
+            target=gui_workers.refresh_daminion_collections_worker,
+            args=(gui_instance,),
+            daemon=True
+        )
+        thread.start()
+        
+    except Exception as e:
+        logging.error(f"Collection refresh error: {e}")
+        if gui_instance.refresh_collections_btn:
+            gui_instance.refresh_collections_btn.configure(state="normal", text="🔄 Refresh")
 
 
 # Menu functions

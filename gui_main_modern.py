@@ -309,50 +309,19 @@ class ModernImageTaggerGUI(ctk.CTk):
         gui_handlers.show_report_summary(self)
 
     def scan_local_models(self):
-        """Scan for locally cached models across all supported tasks."""
+        """Scan for locally cached models across all supported tasks (Async)."""
         try:
-            import huggingface_utils
-            
-            # Supported tasks to scan
-            tasks_to_scan = [
-                config.MODEL_TASK_IMAGE_CLASSIFICATION,
-                config.MODEL_TASK_IMAGE_TO_TEXT,
-                config.MODEL_TASK_ZERO_SHOT
-            ]
-            
-            total_found = 0
-            
-            for task in tasks_to_scan:
-                # Using the proper utility that checks pipeline_tag
-                models = huggingface_utils.find_local_models_by_task(task)
-                
-                if models:
-                    self.all_models.update(models)
-                    self.downloaded_models.update(models)
-
-                    # Store models for this task
-                    if task not in self.all_models_with_tasks:
-                        self.all_models_with_tasks[task] = set()
-                    
-                    self.all_models_with_tasks[task].update(models)
-                    total_found += len(models)
-                    logging.info(f"startup scan: Found {len(models)} local models for '{task}'")
-
-            # After scanning all, update display for CURRENT task
-            if self.model_task:
-                display_task = self.model_task.get()
-                current_task = config.DISPLAY_TASK_MAP.get(display_task, config.MODEL_TASK_IMAGE_CLASSIFICATION)
-            else:
-                 current_task = config.MODEL_TASK_IMAGE_CLASSIFICATION
-                 
-            current_task_models = list(self.all_models_with_tasks.get(current_task, set()))
-            
-            gui_handlers.update_model_list(self, current_task_models, self.downloaded_models)
-            
-            logging.info(f"Startup scan complete. Total cached models found: {total_found}")
+            logging.info("Starting async background scan for local models...")
+            # We don't want to block startup, so we launch a thread.
+            thread = threading.Thread(
+                target=gui_workers.find_local_models_worker,
+                args=(self,),
+                daemon=True
+            )
+            thread.start()
             
         except Exception as e:
-            logging.error(f"Error scanning local models: {e}")
+            logging.error(f"Error starting local model scan: {e}")
 
     # Queue processing
     def process_queue(self):
@@ -568,11 +537,13 @@ class ModernImageTaggerGUI(ctk.CTk):
         if self.stop_button:
             self.stop_button.configure(state="disabled", fg_color="red")
             
-        if self.load_model_button:
              self.load_model_button.configure(
                 text="📥 Load Selected Model",
                 state="normal"
             )
+
+        if self.refresh_collections_btn:
+            self.refresh_collections_btn.configure(state="normal", text="🔄 Refresh")
         
         # Show error in modern dialog
         error_dialog = ctk.CTkToplevel(self)
@@ -625,8 +596,8 @@ class ModernImageTaggerGUI(ctk.CTk):
             if names:
                 self.daminion_collection_combo.set(names[0])
             
-            if self.refresh_collections_btn:
-                self.refresh_collections_btn.configure(state="normal")
+        if self.refresh_collections_btn:
+            self.refresh_collections_btn.configure(state="normal", text="🔄 Refresh")
 
     def _on_models_found(self, data):
         """Handle models found message.

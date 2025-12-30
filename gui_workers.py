@@ -459,3 +459,10 @@ def refresh_daminion_collections_worker(gui_instance):
     except Exception as e:
         logging.exception("Failed to refresh collections")
         gui_instance.q.put({'type': 'error', 'error': f"Failed to fetch collections: {e}"})
+    finally:
+         # Always re-enable button (hacky since we don't have a direct 'worker_done' signal for this specific task)
+         # We can send a custom status that the handler listens for or just rely on the collection update to re-enable?
+         # The handler `_on_daminion_collections` re-enables the button.
+         # But if it fails, we need to ensure it's re-enabled.
+         # Let's add a robust 'refresh_done' message.
+         gui_instance.q.put({'type': 'status_update', 'status': "Collection refresh complete."})
