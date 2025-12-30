@@ -13,6 +13,45 @@ from transformers import pipeline, AutoConfig, AutoTokenizer
 from threading import RLock
 import config
 import json
+import sys
+import platform
+import torch
+
+def get_device_info():
+    """
+    Returns a dictionary containing detailed information about available compute devices.
+    """
+    info = {
+        "devices": ["CPU"],
+        "default": "CPU",
+        "debug_info": {
+            "torch_version": torch.__version__,
+            "platform": platform.platform(),
+            "python_version": sys.version.split()[0],
+            "cuda_available": torch.cuda.is_available(),
+            "mps_available": hasattr(torch.backends, "mps") and torch.backends.mps.is_available(),
+        }
+    }
+    
+    # Check CUDA
+    if torch.cuda.is_available():
+        info["devices"].append("CUDA")
+        info["default"] = "CUDA"
+        info["debug_info"]["cuda_version"] = torch.version.cuda
+        info["debug_info"]["cuda_device_count"] = torch.cuda.device_count()
+        info["debug_info"]["cuda_current_device"] = torch.cuda.current_device()
+        info["debug_info"]["cuda_device_name"] = torch.cuda.get_device_name(0)
+    else:
+        info["debug_info"]["cuda_check_error"] = "False (available=False)"
+
+    # Check MPS (Mac)
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        info["devices"].append("MPS")
+        if info["default"] == "CPU": # Prefer MPS over CPU if no CUDA
+            info["default"] = "MPS"
+            
+    return info
+
 
 class TqdmToQueue(tqdm):
     """A custom tqdm class that sends progress updates to a queue."""

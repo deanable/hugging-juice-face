@@ -37,8 +37,23 @@ def main_modern():
 
 if __name__ == "__main__":
     try:
+        # LOG CLEANUP: Remove old log files to keep the directory clean.
+        # We delete all existing .log files before starting the new session.
+        import glob
+        for log_file in glob.glob("image_tagger_*.log"):
+            try:
+                os.remove(log_file)
+            except Exception as e:
+                print(f"Warning: Could not delete old log {log_file}: {e}")
+
         setup_logging()
         logging.info("Application starting.")
+
+        # Log hardware diagnostics
+        import huggingface_utils
+        device_info = huggingface_utils.get_device_info()
+        logging.info(f"Hardware Diagnostics: {device_info['debug_info']}")
+        print(f"Hardware: {device_info['devices']} (Default: {device_info['default']})")
 
         # Check for PyTorch dependency
         try:

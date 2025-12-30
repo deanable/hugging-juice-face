@@ -32,6 +32,10 @@ import gui_workers
 from enhanced_progress_display import create_enhanced_progress_display, setup_enhanced_progress_monitoring
 from enhanced_progress import get_progress_tracker, ProgressStage, set_progress_stage
 
+# Import Settings Manager
+from settings_manager import SettingsManager
+import huggingface_utils
+
 
 class TextHandler(logging.Handler):
     """
@@ -83,6 +87,7 @@ class ModernImageTaggerGUI(ctk.CTk):
         self.image_dir = None
         self.stop_event = threading.Event()
         self.config_manager = ConfigManager()
+        self.settings_manager = SettingsManager() # Initialize persistence
         self.progress_tracker = ProgressTracker()
         self.daminion_client: Optional[DaminionClient] = None
         self.processing_mode = "local"
@@ -306,19 +311,32 @@ class ModernImageTaggerGUI(ctk.CTk):
     def scan_local_models(self):
         """Scan for locally cached models and organize by current task."""
         try:
-            cache_dir = Path(config.HF_CACHE_DIR)
-            if cache_dir.exists():
-                models = [d.name for d in cache_dir.iterdir() if d.is_dir()]
+            # Use utility to find models SPECIFIC to the current task
+            import huggingface_utils
+            
+            # Get current task to filter models
+            current_task = self.model_task.get() if self.model_task else config.MODEL_TASK_IMAGE_CLASSIFICATION
+            
+            # Using the proper utility that checks pipeline_tag
+            models = huggingface_utils.find_local_models_by_task(current_task)
+            
+            if models:
                 self.all_models.update(models)
                 self.downloaded_models.update(models)
-
-                # Get current task to filter models
-                current_task = self.model_task.get() if self.model_task else config.MODEL_TASK_IMAGE_CLASSIFICATION
 
                 # Store models for current task
                 if current_task not in self.all_models_with_tasks:
                     self.all_models_with_tasks[current_task] = set()
+                
                 self.all_models_with_tasks[current_task].update(models)
+
+                logging.info(f"Found {len(models)} local cached models for task '{current_task}'")
+            else:
+                logging.info(f"No local models found for task '{current_task}'")
+                
+                # Also ensure we clean up if switching tasks so we don't show invalid ones?
+                # The all_models_with_tasks dict handles that segregation.
+
 
                 logging.info(f"Found {len(models)} local cached models for {current_task}")
 

@@ -5,6 +5,7 @@ Modern GUI step components for the Image Tagger using CustomTkinter.
 import customtkinter as ctk
 from pathlib import Path
 import config
+import logging
 
 
 def create_step1_source(parent, gui_instance):
@@ -491,52 +492,71 @@ def create_step3_config(parent, gui_instance):
     hw_frame.pack(fill="x", padx=40, pady=(0, 10))
     ctk.CTkLabel(hw_frame, text="Compute Device:", width=120, anchor="w").pack(side="left")
     
-    # Check available devices
-    import torch
-    devices = ["CPU"]
-    if torch.cuda.is_available():
-        devices.append("CUDA")
-    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-        devices.append("MPS")
-        
-    gui_instance.device_var = ctk.StringVar(value="CPU" if "CPU" in devices else devices[0])
+    # Check available devices using centralized helper
+    import huggingface_utils
+    device_info = huggingface_utils.get_device_info()
+    devices = device_info["devices"]
+    default_device = device_info["default"]
+    
+    # Log the detailed diagnostic info for debugging
+    logging.info(f"Hardware Diagnostic: {device_info['debug_info']}")
+
+    gui_instance.device_var = ctk.StringVar(value=default_device)
     gui_instance.device_selector = ctk.CTkSegmentedButton(
         hw_frame,
         values=devices,
         variable=gui_instance.device_var
     )
     gui_instance.device_selector.pack(side="left", padx=(10, 0), fill="x", expand=True)
+    
+    # Add a small diagnostic label
+    diag_text = "GPU Detected" if "CUDA" in devices else "CPU Mode"
     if "CUDA" in devices:
-        gui_instance.device_var.set("CUDA")
-    elif "MPS" in devices:
-        gui_instance.device_var.set("MPS")
+        gpu_name = device_info["debug_info"].get("cuda_device_name", "Unknown GPU")
+        diag_text = f"Using: {gpu_name}"
+    
+    gui_instance.device_status_label = ctk.CTkLabel(
+        hw_frame, 
+        text=diag_text, 
+        font=ctk.CTkFont(size=10),
+        text_color="gray"
+    )
+    gui_instance.device_status_label.pack(side="left", padx=(10, 0))
+
+    # Open Cache Button
+    cache_btn = ctk.CTkButton(
+        hw_frame,
+        text="📂 Open Model Cache",
+        width=120,
+        height=30,
+        fg_color="gray",
+        hover_color="darkgray",
+        command=lambda: os.startfile(config.HF_CACHE_DIR) if os.path.exists(config.HF_CACHE_DIR) else print("Cache dir not found")
+    )
+    cache_btn.pack(side="right", padx=10)
 
     # Batch Size
     batch_frame = ctk.CTkFrame(config_section, fg_color="transparent")
     batch_frame.pack(fill="x", padx=40, pady=(0, 10))
-    ctk.CTkLabel(batch_frame, text="Batch Size:", width=120, anchor="w").pack(side="left")
     
-    gui_instance.batch_size_label = ctk.CTkLabel(batch_frame, text="8", width=30)
-    gui_instance.batch_size_label.pack(side="right", padx=(10, 0))
+    gui_instance.batch_size_label = ctk.CTkLabel(batch_frame, text="Batch Size:", width=120, anchor="w")
+    gui_instance.batch_size_label.pack(side="left")
     
-    def update_batch_label(value):
-        gui_instance.batch_size_label.configure(text=str(int(value)))
-        
     gui_instance.batch_size_slider = ctk.CTkSlider(
         batch_frame,
         from_=1,
-        to=64,
-        number_of_steps=63,
-        command=update_batch_label
+        to=32,
+        number_of_steps=31,
+        command=lambda v: gui_instance.batch_size_label.configure(text=f"Batch Size: {int(v)}")
     )
     gui_instance.batch_size_slider.pack(side="left", padx=(10, 0), fill="x", expand=True)
-    gui_instance.batch_size_slider.set(8)
+    gui_instance.batch_size_slider.set(default_batch)
 
     # Threshold & Truncation
     param_frame = ctk.CTkFrame(config_section, fg_color="transparent")
     param_frame.pack(fill="x", padx=40, pady=(0, 15))
     
-    gui_instance.truncation_var = ctk.BooleanVar(value=True)
+    gui_instance.truncation_var = ctk.BooleanVar(value=default_trunc)
     gui_instance.truncation_check = ctk.CTkCheckBox(
         param_frame,
         text="Truncate Inputs (prevent errors on long text)",
@@ -552,7 +572,7 @@ def create_step3_config(parent, gui_instance):
         width=150
     )
     gui_instance.threshold_slider.pack(side="left", padx=10)
-    gui_instance.threshold_slider.set(0.0) # Default to no filtering
+    gui_instance.threshold_slider.set(default_thresh) # Default to no filtering
 
     # Status indicator
     gui_instance.step3_status = ctk.CTkLabel(

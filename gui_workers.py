@@ -274,12 +274,28 @@ def process_images_worker(gui_instance, image_files, categories, keywords, devic
         truncation: Whether to truncate inputs
         threshold: Confidence threshold
     """
-    logging.info(f"Image processing worker started. Batch size: {batch_size}")
-    model_task = gui_instance.model_task.get()
+    model_task = gui_instance.model_task.get().strip()
     
-    total_images = len(image_files)
-    completed_count = 0
+    # Validated images
+    valid_paths = [p for p in image_files if p.exists()]
+    
+    # Debug logging to understand why override fails
+    logging.info(f"Worker Debug: Task='{model_task}', ConfigTask='{config.MODEL_TASK_IMAGE_TO_TEXT}', Batch={batch_size}")
+    
+    # SAFETY OVERRIDE: 
+    # For VLM/Image-to-Text models (especially Qwen-VL) on CPU or with dynamic resolution pipelines, 
+    # batching often causes 'shape mismatch' in tensor broadcasting or rope index generation.
+    # We force batch_size=1 for this task to ensure stability.
+    # Relaxed check to ensure it catches 'image-to-text' even if config is weird
+    if (model_task == config.MODEL_TASK_IMAGE_TO_TEXT or "image-to-text" in model_task) and batch_size > 1:
+        logging.warning(f"Batch inference for '{model_task}' can be unstable. Forcing Batch Size to 1.")
+        batch_size = 1
+
+    total_images = len(valid_paths)
+    processed_count = 0
     error_count = 0
+    
+    logging.info(f"Image processing worker started. Batch size: {batch_size}")
     
     gui_instance.q.put({'type': 'progress_max', 'total': total_images})
     gui_instance.q.put({'type': 'status_update', 'status': f"Processing {total_images} images..."})
@@ -289,9 +305,10 @@ def process_images_worker(gui_instance, image_files, categories, keywords, devic
         if gui_instance.stop_event.is_set():
             break
             
-        batch_paths = image_files[i : i + batch_size]
+        # Use valid_paths here, not image_files
+        batch_paths = valid_paths[i : i + batch_size]
         batch_images = []
-        valid_paths = []
+        current_batch_valid_paths = []
         
         # Load images for batch
         for path in batch_paths:
@@ -303,8 +320,18 @@ def process_images_worker(gui_instance, image_files, categories, keywords, devic
                     img = Image.open(path)
                     if img.mode not in ('RGB', 'RGBA', 'L'):
                         img = img.convert('RGB')
+                        
+                    # NORMALIZATION/RESIZING:
+                    # Qwen2-VL and other VLMs can be unstable on CPU with high-res images 
+                    # due to dynamic grid splitting and RoPE index errors.
+                    # We resize large images to a safer max dimension (e.g. 1024px) 
+                    # to simplify the internal grid and avoid 'shape mismatch'.
+                    max_dim = 1024
+                    if img.width > max_dim or img.height > max_dim:
+                        img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
+                        
                     batch_images.append(img)
-                    valid_paths.append(path)
+                    current_batch_valid_paths.append(path)
                 else:
                     error_count += 1
                     logging.warning(f"Skipping invalid image: {path}")
@@ -317,17 +344,11 @@ def process_images_worker(gui_instance, image_files, categories, keywords, devic
 
         try:
             # Run inference on batch
-            # Note: We pass the list of PIL images directly to the pipeline.
-            # Transformers pipeline handles batching internally if we pass a list, 
-            # but we are doing the chunking ourselves to update UI.
-            
             gui_instance.q.put({'type': 'status_update', 'status': f"Inference on batch {i//batch_size + 1}..."})
             
             # Additional kwargs based on task
             kwargs = {"batch_size": len(batch_images)}
             
-            # Truncation is generally for text inputs, effectively used in Classification/ZeroShot pipelines
-            # but NOT valid for ImageToTextPipeline .__call__ or _sanitize_parameters
             if model_task != config.MODEL_TASK_IMAGE_TO_TEXT:
                 kwargs["truncation"] = truncation
             
@@ -340,16 +361,28 @@ def process_images_worker(gui_instance, image_files, categories, keywords, devic
                 results = gui_instance.model(batch_images, **kwargs)
                 
             elif model_task == config.MODEL_TASK_IMAGE_TO_TEXT:
-                # Need prompts for each image
-                messages = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": "Describe the image."}]}]
-                prompt = gui_instance.model.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-                # Pipeline call for list of inputs
-                inputs = [{"image": img, "prompt": prompt} for img in batch_images]
+                # Handle Prompting:
+                # 1. Instruction-tuned VLMs (Qwen-VL, LLaVA) need a chat template with "Describe the image" instruction.
+                # 2. Standard Captioning Models (BLIP, ViT-GPT2) generate captions automatically without a prompt.
+                
+                prompt = None
+                if getattr(gui_instance.model.tokenizer, "chat_template", None):
+                    try:
+                        messages = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": "Describe the image."}]}]
+                        prompt = gui_instance.model.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+                    except Exception as e:
+                        logging.warning(f"Failed to apply chat template (falling back to no prompt): {e}")
+                        prompt = None
+                
+                if prompt:
+                    kwargs["prompt"] = prompt
+                
                 kwargs["generate_kwargs"] = {"max_new_tokens": 200}
-                results = gui_instance.model(inputs, **kwargs)
+                
+                results = gui_instance.model(batch_images, **kwargs)
 
             # Process results
-            for path, result in zip(valid_paths, results):
+            for path, result in zip(current_batch_valid_paths, results):
                 try:
                     cat, kws = image_processing.extract_tags_from_result(result, model_task, threshold)
                     
@@ -362,13 +395,13 @@ def process_images_worker(gui_instance, image_files, categories, keywords, devic
                     else:
                         logging.info(f"No tags found for {path.name} above threshold {threshold}")
                         
-                    completed_count += 1
+                    processed_count += 1
                     
                 except Exception as write_err:
                     error_count += 1
                     logging.error(f"Error writing metadata for {path}: {write_err}")
 
-            gui_instance.q.put({'type': 'progress', 'current': completed_count, 'total': total_images})
+            gui_instance.q.put({'type': 'progress', 'current': processed_count, 'total': total_images})
 
         except Exception as e:
             logging.exception(f"Batch inference failed: {e}")
@@ -378,7 +411,7 @@ def process_images_worker(gui_instance, image_files, categories, keywords, devic
     gui_instance.q.put({
         'type': 'progress_done', 
         'status': "Finished processing.",
-        'processed_count': completed_count,
+        'processed_count': processed_count,
         'error_count': error_count
     })
     logging.info("Image processing worker finished.")

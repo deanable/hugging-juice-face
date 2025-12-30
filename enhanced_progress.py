@@ -74,29 +74,30 @@ class EnhancedProgressTracker:
         self.current_file = ""
         self.last_progress_time = time.time()
         self.stage_weights = {
-            # Download stages: 0-30%
-            ProgressStage.CONNECTING: 5,
-            ProgressStage.DOWNLOADING_MODEL: 20,
-            ProgressStage.LOADING_MODEL: 5,
+            # Download stages: Minimal weight to avoid "starting at 30%"
+            # User requested "ONLY cover the number of files being processed"
+            ProgressStage.CONNECTING: 0,
+            ProgressStage.DOWNLOADING_MODEL: 0,
+            ProgressStage.LOADING_MODEL: 0,
             
-            # Processing stages: 30-95%
-            ProgressStage.PROCESSING_IMAGES: 60,
-            ProgressStage.ANALYZING_IMAGE: 0,  # Part of processing
-            ProgressStage.APPLYING_TAGS: 0,    # Part of processing
-            ProgressStage.UPDATING_METADATA: 5,
+            # Processing stages: 100% of the bar
+            ProgressStage.PROCESSING_IMAGES: 100,
+            ProgressStage.ANALYZING_IMAGE: 0,  
+            ProgressStage.APPLYING_TAGS: 0,    
+            ProgressStage.UPDATING_METADATA: 0,
             
-            # Final stages: 95-100%
-            ProgressStage.FINALIZING: 3,
-            ProgressStage.COMPLETE: 2
+            # Final stages
+            ProgressStage.FINALIZING: 0,
+            ProgressStage.COMPLETE: 0
         }
         
         # Track sub-progress within processing stage
         self.processing_sub_stages = {
-            "downloading_thumbnail": 10,
-            "loading_image": 5,
-            "ai_inference": 70,
-            "extracting_results": 10,
-            "updating_metadata": 5
+            "downloading_thumbnail": 0,
+            "loading_image": 0,
+            "ai_inference": 0,
+            "extracting_results": 0,
+            "updating_metadata": 0
         }
         
         self.current_processing_sub_stage = "downloading_thumbnail"
