@@ -391,6 +391,7 @@ class ModernImageTaggerGUI(ctk.CTk):
             'progress_max': self._handle_progress_max,
             'status_update': lambda d: self._on_status_update(d if isinstance(d, dict) else {'status': d}),
             'error': lambda d: self._on_error(d if isinstance(d, dict) else {'error': str(d)}),
+            'daminion_error': self._on_daminion_error,
             'daminion_connected': lambda d: self._on_daminion_connected(d if isinstance(d, dict) and 'item_count' in d else {'item_count': d.get('total_items', 0) if isinstance(d, dict) else 0}),
             'daminion_collections': self._on_daminion_collections,
             'models_found': self._on_models_found,
@@ -411,6 +412,16 @@ class ModernImageTaggerGUI(ctk.CTk):
         else:
             val = data
         tracker.total_items = int(val) if val else 0
+
+    def _on_daminion_error(self, message):
+        """Handle Daminion connection error message methods."""
+        error_msg = message.get('error', 'Unknown Daminion Error')
+        logging.error(f"Daminion Connection Error: {error_msg}")
+        
+        if self.daminion_status_label:
+            self.daminion_status_label.configure(text="❌ Connection Failed", text_color="red")
+            
+        gui_handlers.show_modern_messagebox(self, "Connection Error", f"Failed to connect to Daminion:\n{error_msg}", "error")
 
     def _on_model_loaded(self, message):
         """Handle model loaded message."""
@@ -537,7 +548,8 @@ class ModernImageTaggerGUI(ctk.CTk):
         if self.stop_button:
             self.stop_button.configure(state="disabled", fg_color="red")
             
-             self.load_model_button.configure(
+        if self.load_model_button:
+            self.load_model_button.configure(
                 text="📥 Load Selected Model",
                 state="normal"
             )
@@ -545,39 +557,17 @@ class ModernImageTaggerGUI(ctk.CTk):
         if self.refresh_collections_btn:
             self.refresh_collections_btn.configure(state="normal", text="🔄 Refresh")
         
-        # Show error in modern dialog
-        error_dialog = ctk.CTkToplevel(self)
-        error_dialog.title("Error")
-        error_dialog.geometry("400x200")
-        error_dialog.transient(self)
-        error_dialog.grab_set()
-        
-        error_label = ctk.CTkLabel(
-            error_dialog,
-            text="❌ Error Occurred",
-            font=ctk.CTkFont(size=16, weight="bold")
-        )
-        error_label.pack(pady=20)
-        
-        error_message = ctk.CTkLabel(
-            error_dialog,
-            text=error_text,
-            wraplength=350
-        )
-        error_message.pack(pady=10)
-        
-        close_button = ctk.CTkButton(
-            error_dialog,
-            text="Close",
-            command=error_dialog.destroy
-        )
-        close_button.pack(pady=20)
+        gui_handlers.show_modern_messagebox(self, "Error Occurred", error_text, "error")
 
     def _on_daminion_connected(self, message):
         """Handle Daminion connection message."""
         item_count = message.get('item_count', 0)
+        if self.daminion_status_label:
+             self.daminion_status_label.configure(text="✅ Connected!", text_color="green")
+             
         if self.status_label:
             self.status_label.configure(text=f"✅ Connected to Daminion: {item_count} items")
+            
         logging.info(f"Daminion connected: {item_count} items available")
         gui_handlers.update_step_states(self)
 

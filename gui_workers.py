@@ -240,16 +240,16 @@ def process_daminion_worker(gui_instance, categories, keywords, items=None, devi
                 # Note: Model is already on device.
                 
                 if model_task == config.MODEL_TASK_IMAGE_CLASSIFICATION:
-                    result = gui_instance.model(image, candidate_labels=categories)
+                    result = gui_instance.model(image)
                     # Use helper
-                    cat, _ = image_processing.extract_tags_from_result(result, model_task, threshold)
+                    cat, _, _ = image_processing.extract_tags_from_result(result, model_task, threshold)
                     if cat:
                         logging.info(f"[GUI] ✓ Item {item_id}: Category={cat}")
                         gui_instance.daminion_client.update_item_metadata(str(item_id), category=cat)
 
                 elif model_task == config.MODEL_TASK_ZERO_SHOT:
                     result = gui_instance.model(image, candidate_labels=keywords)
-                    _, kws = image_processing.extract_tags_from_result(result, model_task, threshold)
+                    _, kws, _ = image_processing.extract_tags_from_result(result, model_task, threshold)
                     if kws:
                         logging.info(f"[GUI] ✓ Item {item_id}: Keywords={kws}")
                         gui_instance.daminion_client.update_item_metadata(str(item_id), keywords=kws)
@@ -259,10 +259,11 @@ def process_daminion_worker(gui_instance, categories, keywords, items=None, devi
                     messages = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": "Describe the image."}]}]
                     prompt = gui_instance.model.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
                     result = gui_instance.model(image, prompt=prompt, generate_kwargs={"max_new_tokens": 200})
-                    _, kws = image_processing.extract_tags_from_result(result, model_task, threshold)
-                    if kws:
-                        logging.info(f"[GUI] ✓ Item {item_id}: Generated={kws}")
-                        gui_instance.daminion_client.update_item_metadata(str(item_id), keywords=kws)
+                    _, _, desc = image_processing.extract_tags_from_result(result, model_task, threshold)
+                    if desc:
+                        logging.info(f"[GUI] ✓ Item {item_id}: Generated={desc[:50]}...")
+                        # Daminion client currently doesn't support Description field update, putting in Keywords for now
+                        gui_instance.daminion_client.update_item_metadata(str(item_id), keywords=[desc])
 
                 completed_count += 1
                 gui_instance.q.put({'type': 'progress', 'current': completed_count, 'total': len(items)})
