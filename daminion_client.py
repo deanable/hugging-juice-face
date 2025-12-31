@@ -1,3 +1,4 @@
+
 """
 Daminion DAMS API Client for retrieving and updating media items.
 """
@@ -11,7 +12,7 @@ import atexit
 import weakref
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple, Any, Callable, Union
 import tempfile
 
 class DaminionAPIError(Exception):
@@ -269,13 +270,17 @@ class DaminionClient:
         logging.info(f"Retrieved {len(items)} items (catalog total: {total_count})")
         return items, total_count
 
-    def get_all_items_paginated(self, batch_size: int = 100, max_items: Optional[int] = None) -> List[Dict]:
+    def get_all_items_paginated(self, batch_size: int = 100, max_items: Optional[int] = None, 
+                              progress_callback: Optional[Callable[[int, int], None]] = None,
+                              stop_event: Optional[Any] = None) -> List[Dict]:
         """
         Retrieve all media items with pagination.
 
         Args:
             batch_size: Number of items to fetch per batch
             max_items: Maximum number of items to retrieve (None = all)
+            progress_callback: Optional function(current_count, total_count)
+            stop_event: Optional event object with is_set() method to check for cancellation
 
         Returns:
             List of all media items
@@ -294,7 +299,15 @@ class DaminionClient:
         logging.info(f"[DAMINION] Target: {total_count} items from Daminion")
         logging.info(f"[DAMINION] Estimated batches: {(total_count // batch_size) + 1}")
 
+        # Initial progress update
+        if progress_callback:
+            progress_callback(0, total_count)
+
         while len(all_items) < total_count and current_id < total_count + batch_size:
+            if stop_event and stop_event.is_set():
+                logging.info("[DAMINION] Fetch cancelled by user.")
+                break
+
             batch_num += 1
             logging.info(f"[DAMINION] --- Batch {batch_num} ---")
             logging.info(f"[DAMINION] Requesting IDs {current_id} to {min(current_id + batch_size - 1, total_count + batch_size - 1)}")
@@ -305,11 +318,18 @@ class DaminionClient:
             batch_items = self.get_media_items_by_ids(item_ids)
             logging.info(f"[DAMINION] [OK] Received {len(batch_items)} items in batch {batch_num}")
 
-            all_items.extend(batch_items)
-            current_id += batch_size
+            if batch_items:
+                all_items.extend(batch_items)
+                if progress_callback:
+                    progress_callback(len(all_items), total_count)
+            else:
+                logging.debug("[DAMINION] Empty batch returned, skipping...")
 
-            logging.info(f"[DAMINION] Progress: {len(all_items)}/{total_count} items ({len(all_items)*100//total_count}%)")
-
+            current_id += batch_size # Simply increment by batch size
+            
+            # Rate limiting / polite pause
+            time.sleep(0.1) 
+            
             if max_items and len(all_items) >= max_items:
                 all_items = all_items[:max_items]
                 logging.info(f"[DAMINION] Reached max_items limit, stopping")
@@ -569,6 +589,7 @@ class DaminionClient:
 
         Note:
             Processes items in batches to avoid overwhelming the API.
+            Payload format matches POST api/ItemData/BatchChange documentation.
         """
         if not item_ids:
             return True
@@ -581,19 +602,46 @@ class DaminionClient:
             batch = item_ids[i:i + batch_size]
             logging.debug(f"[DAMINION] Batch updating items {i+1} to {i+len(batch)}")
 
-            data = {
-                "mediaItemIds": batch,
-                "tags": tags
+            # Transform tags dict into list of DataChangeItem objects
+            data_items = []
+            for tag_name, tag_values in tags.items():
+                if isinstance(tag_values, list):
+                    for val in tag_values:
+                        data_items.append({
+                            "guid": tag_name,   # Assuming 'guid' accepts the Tag Name
+                            "value": str(val),
+                            "remove": False
+                        })
+                else:
+                     # Single value case
+                     data_items.append({
+                        "guid": tag_name,
+                        "value": str(tag_values),
+                        "remove": False
+                    })
+            
+            # Construct payload
+            # POST api/ItemData/BatchChange
+            # { "ids": [...], "delete": false, "data": [...] }
+            payload = {
+                "ids": [int(x) if str(x).isdigit() else x for x in batch], # API examples show ints for ids usually, but let's be safe
+                "delete": False,
+                "data": data_items
             }
 
             try:
-                response = self._make_request(endpoint, method='POST', data=data)
+                response = self._make_request(endpoint, method='POST', data=payload)
                 success = response.get('success', False)
-
-                if success:
-                    logging.debug(f"[DAMINION] Successfully updated tags for batch of {len(batch)} items")
+                
+                # Some API versions return just { "success": true } or { "data": true }
+                if success is True or response.get('data') is True:
+                     logging.debug(f"[DAMINION] Successfully updated tags for batch of {len(batch)} items")
                 else:
                     error = response.get('error', 'Unknown error')
+                    # Check for errorCode if present
+                    if 'errorCode' in response:
+                        error += f" (Code: {response['errorCode']})"
+                    
                     logging.error(f"[DAMINION] Tag update failed for batch: {error}")
                     all_successful = False
 

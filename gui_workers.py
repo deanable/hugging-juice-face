@@ -194,9 +194,28 @@ def process_daminion_worker(gui_instance, categories, keywords, items=None, devi
 
     try:
         # Fetch items logic...
+        # Fetch items logic...
         if items is None:
-            gui_instance.q.put({'type': 'status_update', 'status': "Fetching items from Daminion..."})
-            items = gui_instance.daminion_client.get_all_items_paginated(batch_size=100, max_items=None)
+            gui_instance.q.put({'type': 'status_update', 'status': "Connecting to Daminion..."})
+            
+            def progress_cb(current, total):
+                msg = f"Fetching items from Daminion... ({current}/{total})"
+                gui_instance.q.put({'type': 'status_update', 'status': msg})
+                # Optional: Update a progress bar if available for this stage
+                # gui_instance.q.put({'type': 'progress', 'current': current, 'total': total})
+            
+            items = gui_instance.daminion_client.get_all_items_paginated(
+                batch_size=50, 
+                max_items=None,
+                progress_callback=progress_cb,
+                stop_event=gui_instance.stop_event
+            )
+            
+            if gui_instance.stop_event.is_set():
+                gui_instance.q.put({'type': 'status_update', 'status': "Fetch cancelled."})
+                logging.info("[GUI] Daminion processing cancelled by user during fetch.")
+                gui_instance.q.put({'type': 'completion', 'message': "Cancelled."})
+                return
         
         # Flatten and validate...
         if items:
@@ -242,17 +261,19 @@ def process_daminion_worker(gui_instance, categories, keywords, items=None, devi
                 if model_task == config.MODEL_TASK_IMAGE_CLASSIFICATION:
                     result = gui_instance.model(image)
                     # Use helper
-                    cat, _, _ = image_processing.extract_tags_from_result(result, model_task, threshold)
-                    if cat:
-                        logging.info(f"[GUI] ✓ Item {item_id}: Category={cat}")
-                        gui_instance.daminion_client.update_item_metadata(str(item_id), category=cat)
-
-                elif model_task == config.MODEL_TASK_ZERO_SHOT:
-                    result = gui_instance.model(image, candidate_labels=keywords)
+                    # Classification returns keywords, not category
                     _, kws, _ = image_processing.extract_tags_from_result(result, model_task, threshold)
                     if kws:
                         logging.info(f"[GUI] ✓ Item {item_id}: Keywords={kws}")
                         gui_instance.daminion_client.update_item_metadata(str(item_id), keywords=kws)
+
+                elif model_task == config.MODEL_TASK_ZERO_SHOT:
+                    result = gui_instance.model(image, candidate_labels=keywords)
+                    # Zero-Shot returns category, not keywords
+                    cat, _, _ = image_processing.extract_tags_from_result(result, model_task, threshold)
+                    if cat:
+                        logging.info(f"[GUI] ✓ Item {item_id}: Category={cat}")
+                        gui_instance.daminion_client.update_item_metadata(str(item_id), category=cat)
 
                 elif model_task == config.MODEL_TASK_IMAGE_TO_TEXT:
                     # Provide prompt for VL models
@@ -349,9 +370,9 @@ def process_images_worker(gui_instance, image_files, categories, keywords, devic
                     # NORMALIZATION/RESIZING:
                     # Qwen2-VL and other VLMs can be unstable on CPU with high-res images 
                     # due to dynamic grid splitting and RoPE index errors.
-                    # We resize large images to a safer max dimension (e.g. 1024px) 
+                    # We resize large images to a safer max dimension (e.g. 512px) 
                     # to simplify the internal grid and avoid 'shape mismatch'.
-                    max_dim = 1024
+                    max_dim = 512
                     if img.width > max_dim or img.height > max_dim:
                         img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
                         

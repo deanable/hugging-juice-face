@@ -144,7 +144,7 @@ def get_downloaded_models(task, token=None):
     logging.info(f"Searching for downloaded models with task: '{task}'")
     try:
         # Limit results to reduce network load and UI clutter
-        models = list_models(filter=task, sort="downloads", direction=-1, limit=config.MODEL_SEARCH_LIMIT, token=token)
+        models = list_models(filter=task, library="transformers", sort="downloads", direction=-1, limit=config.MODEL_SEARCH_LIMIT, token=token)
         downloaded_models = []
         for model in models or []:
             if is_model_downloaded(model.id, token=token):
@@ -160,7 +160,7 @@ def find_models_worker(task, q, token=None):
     logging.info(f"Worker searching for top {config.MODEL_SEARCH_LIMIT} models with task: '{task}'")
     try:
         # Request the top N models by downloads to keep the UI responsive.
-        models = list_models(filter=task, sort="downloads", direction=-1, limit=config.MODEL_SEARCH_LIMIT, token=token)
+        models = list_models(filter=task, library="transformers", sort="downloads", direction=-1, limit=config.MODEL_SEARCH_LIMIT, token=token)
         all_found = [m.id for m in models or []]
         
         logging.info(f"Hub returned {len(all_found)} raw models: {all_found}")
@@ -419,7 +419,7 @@ def find_models_by_task(task):
     logging.info(f"Searching for models (sync) with task: '{task}'")
     try:
         # Limit to the top N models to avoid overwhelming the UI and reduce network usage
-        models = list_models(filter=task, sort="downloads", direction=-1, limit=config.MODEL_SEARCH_LIMIT)
+        models = list_models(filter=task, library="transformers", sort="downloads", direction=-1, limit=config.MODEL_SEARCH_LIMIT)
         model_ids = [model.id for model in models or []][:config.MODEL_SEARCH_LIMIT]
         downloaded_models = [mid for mid in model_ids if is_model_downloaded(mid)]
         logging.info(f"Found {len(model_ids)} models (sync). {len(downloaded_models)} cached locally.")
