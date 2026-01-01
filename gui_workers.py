@@ -306,8 +306,8 @@ def process_daminion_worker(gui_instance, categories, keywords, items=None, devi
                     _, _, desc = image_processing.extract_tags_from_result(result, model_task, threshold)
                     if desc:
                         logging.info(f"[GUI] ✓ Item {item_id}: Generated={desc[:50]}...")
-                        # Daminion client currently doesn't support Description field update, putting in Keywords for now
-                        gui_instance.daminion_client.update_item_metadata(str(item_id), keywords=[desc])
+                        # Pass description to the new description parameter
+                        gui_instance.daminion_client.update_item_metadata(str(item_id), description=desc)
 
                 completed_count += 1
                 gui_instance.q.put({'type': 'progress', 'current': completed_count, 'total': len(items)})

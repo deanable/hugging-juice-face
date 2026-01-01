@@ -726,7 +726,8 @@ class DaminionClient:
         return all_successful
 
     def update_item_metadata(self, item_id: str, category: Optional[str] = None,
-                           keywords: Optional[List[str]] = None) -> bool:
+                           keywords: Optional[List[str]] = None,
+                           description: Optional[str] = None) -> bool:
         """
         Update metadata for a single item.
 
@@ -734,12 +735,13 @@ class DaminionClient:
             item_id: Media item ID
             category: Category/classification for the item
             keywords: List of keywords to add
+            description: Description/caption for the item
 
         Returns:
             True if successful, False otherwise
         """
         logging.debug(f"[DAMINION] Updating metadata for item {item_id}")
-        logging.debug(f"[DAMINION] Category: {category}, Keywords: {keywords}")
+        logging.debug(f"[DAMINION] Category: {category}, Keywords: {keywords}, Desc: {bool(description)}")
 
         tags = {}
 
@@ -748,6 +750,9 @@ class DaminionClient:
 
         if keywords:
             tags['Keywords'] = keywords
+
+        if description:
+            tags['Description'] = [description]
 
         if not tags:
             logging.warning(f"[DAMINION] No metadata to update for item {item_id}")
