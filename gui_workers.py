@@ -253,7 +253,8 @@ def process_daminion_worker(gui_instance, categories, keywords, items=None, devi
                     failed_count += 1
                     continue
 
-                image = Image.open(thumb_path)
+                with Image.open(thumb_path) as img:
+                    image = img.copy()
                 
                 # Use pipeline directly (simulating single item batch)
                 # Note: Model is already on device.
@@ -264,6 +265,17 @@ def process_daminion_worker(gui_instance, categories, keywords, items=None, devi
                     # Classification returns keywords, not category
                     _, kws, _ = image_processing.extract_tags_from_result(result, model_task, threshold)
                     if kws:
+                        # Post-process: Split commas and Title Case
+                        processed_kws = []
+                        for kw in kws:
+                            # Split by comma if present (some models return "a, b, c" as one string)
+                            parts = [p.strip() for p in kw.split(',')]
+                            # Title Case and add
+                            processed_kws.extend([p.title() for p in parts if p])
+                        
+                        # Deduplicate while preserving order
+                        kws = list(dict.fromkeys(processed_kws))
+
                         logging.info(f"[GUI] ✓ Item {item_id}: Keywords={kws}")
                         gui_instance.daminion_client.update_item_metadata(str(item_id), keywords=kws)
 
@@ -276,10 +288,21 @@ def process_daminion_worker(gui_instance, categories, keywords, items=None, devi
                         gui_instance.daminion_client.update_item_metadata(str(item_id), category=cat)
 
                 elif model_task == config.MODEL_TASK_IMAGE_TO_TEXT:
-                    # Provide prompt for VL models
-                    messages = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": "Describe the image."}]}]
-                    prompt = gui_instance.model.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-                    result = gui_instance.model(image, prompt=prompt, generate_kwargs={"max_new_tokens": 200})
+                    prompt = None
+                    try:
+                        # Try to construct a chat prompt for VLMs (LLaVA, Qwen-VL)
+                        if getattr(gui_instance.model.tokenizer, "chat_template", None):
+                            messages = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": "Describe the image."}]}]
+                            prompt = gui_instance.model.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+                    except Exception:
+                        pass
+                    
+                    if prompt:
+                         result = gui_instance.model(image, prompt=prompt, generate_kwargs={"max_new_tokens": 200})
+                    else:
+                         # Fallback for BLIP/GIT - simple captioning
+                         result = gui_instance.model(image)
+
                     _, _, desc = image_processing.extract_tags_from_result(result, model_task, threshold)
                     if desc:
                         logging.info(f"[GUI] ✓ Item {item_id}: Generated={desc[:50]}...")

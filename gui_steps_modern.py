@@ -580,14 +580,22 @@ def create_step3_config(parent, gui_instance):
     thresh_val_label = ctk.CTkLabel(param_frame, text=f"Min Score: {default_thresh:.2f}", width=120)
     thresh_val_label.pack(side="left", padx=(20, 0))
     
+    # Slider with labels
+    slider_container = ctk.CTkFrame(param_frame, fg_color="transparent")
+    slider_container.pack(side="left", padx=10)
+    
+    ctk.CTkLabel(slider_container, text="Loose", font=ctk.CTkFont(size=10)).pack(side="left", padx=(0, 5))
+    
     gui_instance.threshold_slider = ctk.CTkSlider(
-        param_frame,
+        slider_container,
         from_=0.0,
         to=1.0,
         width=150,
         command=lambda v: thresh_val_label.configure(text=f"Min Score: {v:.2f}")
     )
-    gui_instance.threshold_slider.pack(side="left", padx=10)
+    gui_instance.threshold_slider.pack(side="left")
+    
+    ctk.CTkLabel(slider_container, text="Strict", font=ctk.CTkFont(size=10)).pack(side="left", padx=(5, 0))
     gui_instance.threshold_slider.set(default_thresh) # Default to no filtering
 
     # Status indicator

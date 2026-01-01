@@ -62,6 +62,7 @@ class DaminionClient:
         self._last_request_time = 0.0
         self._search_endpoint_unavailable = False
         self._structured_query_unavailable = False
+        self._tag_map = {}  # Cache for Tag Name -> GUID mapping
 
         DaminionClient._instances.add(self)
         atexit.register(self.cleanup_temp_files)
@@ -118,6 +119,10 @@ class DaminionClient:
                 self.authenticated = True
                 logging.info(f"[DAMINION] [OK] Successfully authenticated to {self.base_url} as {self.username}")
                 logging.info(f"[DAMINION] Session has {len(self.cookies)} cookie(s)")
+                
+                # Fetch tag schema to populate GUID map
+                self.get_tag_schema()
+                
                 return True
 
         except urllib.error.HTTPError as e:
@@ -503,6 +508,54 @@ class DaminionClient:
 
         return [it for it in items if is_flagged_item(it)]
 
+    def get_tag_schema(self) -> Dict[str, str]:
+        """
+        Fetch the default layout to map Tag Names (e.g., 'Keywords') to their internal GUIDs.
+        
+        Returns:
+            Dictionary mapping Tag Name -> GUID
+        """
+        logging.info("[DAMINION] Fetching tag schema (Layout) to map Tag Names to GUIDs...")
+        endpoint = "/api/ItemData/GetDefaultLayout"
+        try:
+            response = self._make_request(endpoint)
+            # Response format: { "properties": [ { "properties": [ { "propertyName": "Keywords", "propertyGuid": "..." } ... ] } ... ] }
+            
+            # Recursively find properties
+            def extract_properties(obj):
+                if isinstance(obj, dict):
+                    p_name = obj.get('propertyName') or obj.get('name') or obj.get('tagName')
+                    p_guid = obj.get('propertyGuid') or obj.get('guid') or obj.get('id')
+                    
+                    # Store if we have both (and check if p_name is string to avoid crashes)
+                    if p_name and p_guid and isinstance(p_name, str):
+                        # Normalize to title case or lower case? Daminion seems case-sensitive mostly but let's store as is
+                        # We might want to store 'lower' -> guid for case-insensitive lookup
+                        self._tag_map[p_name] = str(p_guid)
+                        # Also store lowercase version for robust lookup
+                        self._tag_map[p_name.lower()] = str(p_guid)
+
+                    # Recurse into children
+                    for key, value in obj.items():
+                        if isinstance(value, list):
+                            for item in value:
+                                extract_properties(item)
+                        elif isinstance(value, dict):
+                            extract_properties(value)
+                elif isinstance(obj, list):
+                    for item in obj:
+                        extract_properties(item)
+
+            extract_properties(response)
+            
+            logging.info(f"[DAMINION] [OK] Mapped {len(self._tag_map) // 2} tags to GUIDs.")
+            logging.debug(f"[DAMINION] Tag Map: {list(self._tag_map.keys())}")
+            return self._tag_map
+            
+        except Exception as e:
+            logging.warning(f"[DAMINION] Failed to fetch tag schema: {e}. Tag updates using names might fail.")
+            return {}
+
     def get_untagged_items(self) -> Tuple[List[Dict], int]:
         """
         Retrieve media items that don't have all required metadata.
@@ -620,13 +673,31 @@ class DaminionClient:
                         "remove": False
                     })
             
+
+            
             # Construct payload
             # POST api/ItemData/BatchChange
             # { "ids": [...], "delete": false, "data": [...] }
+            
+            # Translate Tag Names to GUIDs
+            final_data_items = []
+            for item in data_items:
+                raw_key = item['guid']
+                # Try to find GUID
+                guid = self._tag_map.get(raw_key) or self._tag_map.get(raw_key.lower())
+                
+                if guid:
+                    logging.debug(f"[DAMINION] Mapped tag '{raw_key}' -> {guid}")
+                    item['guid'] = guid
+                    final_data_items.append(item)
+                else:
+                    logging.warning(f"[DAMINION] Warning: Could not find GUID for tag '{raw_key}'. Sending as-is (might fail).")
+                    final_data_items.append(item)
+
             payload = {
-                "ids": [int(x) if str(x).isdigit() else x for x in batch], # API examples show ints for ids usually, but let's be safe
+                "ids": [int(x) if str(x).isdigit() else x for x in batch], 
                 "delete": False,
-                "data": data_items
+                "data": final_data_items
             }
 
             try:
@@ -637,7 +708,7 @@ class DaminionClient:
                 if success is True or response.get('data') is True:
                      logging.debug(f"[DAMINION] Successfully updated tags for batch of {len(batch)} items")
                 else:
-                    error = response.get('error', 'Unknown error')
+                    error = response.get('error') or 'Unknown error'
                     # Check for errorCode if present
                     if 'errorCode' in response:
                         error += f" (Code: {response['errorCode']})"

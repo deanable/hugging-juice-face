@@ -37,29 +37,21 @@ from settings_manager import SettingsManager
 import huggingface_utils
 
 
-class TextHandler(logging.Handler):
+class QueueHandler(logging.Handler):
     """
-    Custom logging handler that sends messages to a Tkinter Text widget.
+    Thread-safe logging handler that pushes messages to a queue.
+    The GUI main thread will poll this queue and update the text widget.
     """
-    def __init__(self, text_widget):
+    def __init__(self, log_queue):
         logging.Handler.__init__(self)
-        self.text_widget = text_widget
+        self.log_queue = log_queue
 
     def emit(self, record):
-        msg = self.format(record)
-        def append():
-            try:
-                self.text_widget.configure(state='normal')
-                self.text_widget.insert("end", msg + '\n')
-                self.text_widget.see("end")
-                self.text_widget.configure(state='disabled')
-            except Exception:
-                pass
-        # Schedule the update on the main UI thread
         try:
-            self.text_widget.after(0, append)
+            msg = self.format(record)
+            self.log_queue.put(msg)
         except Exception:
-            pass
+            self.handleError(record)
 
 
 
@@ -79,6 +71,7 @@ class ModernImageTaggerGUI(ctk.CTk):
 
         # Initialize state
         self.q = queue.Queue()
+        self.log_queue = queue.Queue()  # Separate queue for logs
         self.model = None
         self._dl_start_time = None
         self._dl_total_bytes = None
@@ -139,7 +132,7 @@ class ModernImageTaggerGUI(ctk.CTk):
         
         # New Log Widget
         self.log_box: Optional[ctk.CTkTextbox] = None
-        self.log_handler: Optional[TextHandler] = None
+        self.log_handler: Optional[QueueHandler] = None
 
         self._create_widgets()
         self._create_menu()
@@ -157,11 +150,12 @@ class ModernImageTaggerGUI(ctk.CTk):
             pass
 
         self.after(100, self.process_queue)
+        self.after(100, self.process_log_queue)  # Start log processing loop
         self.after(200, self.scan_local_models)  # Scan for local models on startup
         
         # Setup logging handler for UI
         if self.log_box:
-            self.log_handler = TextHandler(self.log_box)
+            self.log_handler = QueueHandler(self.log_queue)
             formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%H:%M:%S')
             self.log_handler.setFormatter(formatter)
             logging.getLogger().addHandler(self.log_handler)
@@ -334,6 +328,37 @@ class ModernImageTaggerGUI(ctk.CTk):
             pass
         finally:
             self.after(100, self.process_queue)
+
+    def process_log_queue(self):
+        """Process log messages from the log queue in batches."""
+        try:
+            messages = []
+            while True:
+                try:
+                    msg = self.log_queue.get_nowait()
+                    messages.append(msg)
+                    # Limit batch size to prevent freezing if queue is huge
+                    if len(messages) >= 100:
+                        break
+                except queue.Empty:
+                    break
+            
+            if messages and self.log_box:
+                batch_msg = "\n".join(messages) + "\n"
+                try:
+                    self.log_box.configure(state='normal')
+                    self.log_box.insert("end", batch_msg)
+                    self.log_box.see("end")
+                    self.log_box.configure(state='disabled')
+                except Exception as e:
+                    # Fallback print if widget fails
+                    print(f"Log widget error: {e}")
+                    
+        except Exception as e:
+            print(f"Log processing error: {e}")
+        finally:
+            # Check again soon
+            self.after(100, self.process_log_queue)
 
     def _normalize_message(self, message):
         """Normalize message to standard format (type, data).
