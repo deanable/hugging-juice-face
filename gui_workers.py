@@ -201,8 +201,10 @@ def process_daminion_worker(gui_instance, categories, keywords, items=None, devi
             def progress_cb(current, total):
                 msg = f"Fetching items from Daminion... ({current}/{total})"
                 gui_instance.q.put({'type': 'status_update', 'status': msg})
-                # Optional: Update a progress bar if available for this stage
-                # gui_instance.q.put({'type': 'progress', 'current': current, 'total': total})
+                # Update progress bar
+                if total > 0:
+                     gui_instance.q.put({'type': 'progress_max', 'total': total})
+                gui_instance.q.put({'type': 'progress', 'current': current, 'total': total})
             
             items = gui_instance.daminion_client.get_all_items_paginated(
                 batch_size=50, 
