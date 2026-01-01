@@ -8,17 +8,6 @@ import sys
 import os
 from logging_config import setup_logging
 
-def main_original():
-    """Run the original Tkinter GUI."""
-    from gui_main import ImageTaggerGUI
-    
-    try:
-        app = ImageTaggerGUI()
-        app.mainloop()
-    except Exception as e:
-        logging.exception("Original GUI failed")
-        raise
-
 def main_modern():
     """Run the modern CustomTkinter GUI."""
     try:
