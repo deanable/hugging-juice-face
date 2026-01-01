@@ -686,6 +686,16 @@ class DaminionClient:
                 # Try to find GUID
                 guid = self._tag_map.get(raw_key) or self._tag_map.get(raw_key.lower())
                 
+                # Special handling for 'Category' which is not a standard Daminion tag
+                if not guid and raw_key == 'Category':
+                    # Try common synonyms
+                    guid = self._tag_map.get('Categories') or self._tag_map.get('Subject') or self._tag_map.get('Classification')
+                    if not guid:
+                        # Fallback to Keywords so we at least save the data
+                        guid = self._tag_map.get('Keywords')
+                        if guid:
+                            logging.warning(f"[DAMINION] 'Category' tag not found. Remapped to 'Keywords'.")
+
                 if guid:
                     logging.debug(f"[DAMINION] Mapped tag '{raw_key}' -> {guid}")
                     item['guid'] = guid

@@ -253,20 +253,26 @@ def extract_tags_from_result(
             
             # Handle list of dicts (standard for image zero-shot)
             if isinstance(result, list):
-                for item in result:
+                # Sort by score descending
+                sorted_res = sorted(result, key=lambda x: x['score'], reverse=True)
+                for item in sorted_res:
                     if isinstance(item, dict) and 'label' in item and 'score' in item:
                         if item['score'] >= threshold:
                             matched_categories.append(item['label'])
             
             # Handle dict with lists (text-style zero-shot)
             elif isinstance(result, dict) and 'labels' in result and 'scores' in result:
-                for label, score in zip(result['labels'], result['scores']):
+                # Zip and sort
+                zipped = sorted(zip(result['labels'], result['scores']), key=lambda x: x[1], reverse=True)
+                for label, score in zipped:
                     if score >= threshold:
                         matched_categories.append(label)
             
             if matched_categories:
-                # Join with semicolons for the single Category/Subject field
-                category = "; ".join(matched_categories)
+                # User preference: Single best category instead of list
+                category = matched_categories[0]
+                # Log usage
+                logging.info(f"Zero-Shot Category: '{category}' (Score: >={threshold})")
 
         elif model_task == config.MODEL_TASK_IMAGE_TO_TEXT:
             # Result: [{'generated_text': '...'}]
