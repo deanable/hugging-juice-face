@@ -392,8 +392,9 @@ class DaminionClient:
         for endpoint in tried:
             try:
                 response = self._make_request(endpoint)
-                items = response.get('mediaItems') or response.get('items') or response.get('data') or response
+                items = response.get('mediaItems') or response.get('items') or response.get('data') or response.get('collections') or response
                 if isinstance(items, dict):
+                     # Handle dictionary response {id: item, ...}
                     return list(items.values())
                 if isinstance(items, list):
                     return items

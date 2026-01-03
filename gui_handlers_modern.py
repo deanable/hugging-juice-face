@@ -431,7 +431,7 @@ def on_mode_change(gui_instance, mode):
     else:
         gui_instance.local_section.pack_forget()
         gui_instance.daminion_section.pack(fill="x", pady=(0, 20))
-        gui_instance.scope_var.configure(values=["All Items", "Flagged Items", "Untagged Items", "Custom Collection"])
+        gui_instance.scope_var.configure(values=["All Items", "Flagged Items", "Untagged Items", "Custom Collection", "Shared Collection"])
 
         # Show Daminion-specific frames
         if hasattr(gui_instance, 'daminion_collections_frame'):
@@ -462,12 +462,30 @@ def on_scope_change(gui_instance, event=None):
                 gui_instance.collection_path_frame.pack(fill="x", padx=40, pady=(0, 10))
             else:
                 gui_instance.collection_path_frame.pack_forget()
+
+            # Show/hide Daminion collections dropdown
+            if hasattr(gui_instance, 'daminion_collections_frame'):
+                 if scope == "Shared Collection":
+                     gui_instance.daminion_collections_frame.pack(fill="x", padx=40, pady=(0, 10))
+                 else:
+                     gui_instance.daminion_collections_frame.pack_forget()
         else:
             # Legacy support: fall back to individual widget
             if scope == "Custom Collection":
                 gui_instance.collection_path.pack(side="left", padx=(10, 0))
             else:
                 gui_instance.collection_path.pack_forget()
+            
+            # Legacy dropdown support
+            if hasattr(gui_instance, 'daminion_collection_combo'):
+                if scope == "Shared Collection":
+                    gui_instance.daminion_collection_combo.pack(side="left", padx=(10, 0))
+                    if hasattr(gui_instance, 'refresh_collections_btn'):
+                        gui_instance.refresh_collections_btn.pack(side="left", padx=(10, 0))
+                else:
+                    gui_instance.daminion_collection_combo.pack_forget()
+                    if hasattr(gui_instance, 'refresh_collections_btn'):
+                        gui_instance.refresh_collections_btn.pack_forget()
 
         # Update processing info
         if hasattr(gui_instance, 'processing_info_label'):
@@ -757,8 +775,32 @@ def on_start_processing(gui_instance):
             worker_args = (gui_instance, image_files, categories, keywords, device, batch_size, truncation, threshold)
         else: # daminion
             target_worker = gui_workers.process_daminion_worker
+            
+            # Extract scope and collection ID
+            scope = gui_instance.scope_var.get()
+            collection_id = None
+            
+            if scope == "Shared Collection":
+                # Extract ID from combo "Name (ID)"
+                selection = gui_instance.daminion_collection_combo.get()
+                if selection:
+                    # Robust parsing of "Name (ID)" format
+                    import re
+                    match = re.search(r'\(([^)]+)\)$', selection)
+                    if match:
+                        collection_id = match.group(1)
+                    else:
+                        # Fallback for simple ID or unexpected format
+                        collection_id = selection
+                        logging.warning(f"Could not parse ID from selection '{selection}', using as-is.")
+                else:
+                    show_modern_messagebox(gui_instance, "Missing Selection", "Please select a shared collection.", "warning")
+                    gui_instance.start_button.configure(text="🚀 Start Processing", state="normal", fg_color="green")
+                    gui_instance.stop_button.configure(state="disabled", fg_color="red")
+                    return
+
             # Daminion worker signature update
-            worker_args = (gui_instance, categories, keywords, None, device, batch_size, truncation, threshold)
+            worker_args = (gui_instance, categories, keywords, None, device, batch_size, truncation, threshold, collection_id)
 
         # Start processing in worker thread
         thread = threading.Thread(

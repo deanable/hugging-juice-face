@@ -160,7 +160,7 @@ def find_local_models_worker(gui_instance):
         gui_instance.q.put({'type': 'error', 'error': f"Failed to scan local model cache: {e}"})
 
 
-def process_daminion_worker(gui_instance, categories, keywords, items=None, device=-1, batch_size=8, truncation=True, threshold=0.0):
+def process_daminion_worker(gui_instance, categories, keywords, items=None, device=-1, batch_size=8, truncation=True, threshold=0.0, collection_id=None):
     """Worker thread for processing Daminion items.
 
     Args:
@@ -172,9 +172,10 @@ def process_daminion_worker(gui_instance, categories, keywords, items=None, devi
         batch_size: Batch size (unused for now as we process one by one due to API latency)
         truncation: Whether to truncate inputs
         threshold: Confidence threshold
+        collection_id: ID of shared collection to process (optional)
     """
     logging.info(f"[GUI] ========== DAMINION PROCESSING WORKER STARTED ==========")
-    logging.info(f"[GUI] Params: Batch={batch_size}, Trunc={truncation}, Thr={threshold}")
+    logging.info(f"[GUI] Params: Batch={batch_size}, Trunc={truncation}, Thr={threshold}, Collection ID={collection_id}")
     
     # ... (rest of Daminion logic remains mostly same, but we should use the new threshold)
     # For now, keeping the existing Daminion logic structure but updating signatures.
@@ -194,24 +195,33 @@ def process_daminion_worker(gui_instance, categories, keywords, items=None, devi
 
     try:
         # Fetch items logic...
-        # Fetch items logic...
         if items is None:
-            gui_instance.q.put({'type': 'status_update', 'status': "Connecting to Daminion..."})
-            
-            def progress_cb(current, total):
-                msg = f"Fetching items from Daminion... ({current}/{total})"
-                gui_instance.q.put({'type': 'status_update', 'status': msg})
-                # Update progress bar
-                if total > 0:
-                     gui_instance.q.put({'type': 'progress_max', 'total': total})
-                gui_instance.q.put({'type': 'progress', 'current': current, 'total': total})
-            
-            items = gui_instance.daminion_client.get_all_items_paginated(
-                batch_size=50, 
-                max_items=None,
-                progress_callback=progress_cb,
-                stop_event=gui_instance.stop_event
-            )
+            if collection_id:
+                 gui_instance.q.put({'type': 'status_update', 'status': f"Fetching items from shared collection {collection_id}..."})
+                 try:
+                     items = gui_instance.daminion_client.get_shared_collection_items(collection_id)
+                     logging.info(f"[GUI] Retrieved {len(items)} items from collection {collection_id}")
+                 except Exception as e:
+                     logging.error(f"Failed to fetch collection items: {e}")
+                     gui_instance.q.put({'type': 'error', 'error': f"Failed to fetch collection items: {e}"})
+                     return
+            else:
+                gui_instance.q.put({'type': 'status_update', 'status': "Connecting to Daminion..."})
+                
+                def progress_cb(current, total):
+                    msg = f"Fetching items from Daminion... ({current}/{total})"
+                    gui_instance.q.put({'type': 'status_update', 'status': msg})
+                    # Update progress bar
+                    if total > 0:
+                         gui_instance.q.put({'type': 'progress_max', 'total': total})
+                    gui_instance.q.put({'type': 'progress', 'current': current, 'total': total})
+                
+                items = gui_instance.daminion_client.get_all_items_paginated(
+                    batch_size=50, 
+                    max_items=None,
+                    progress_callback=progress_cb,
+                    stop_event=gui_instance.stop_event
+                )
             
             if gui_instance.stop_event.is_set():
                 gui_instance.q.put({'type': 'status_update', 'status': "Fetch cancelled."})
