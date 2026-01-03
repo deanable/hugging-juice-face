@@ -652,7 +652,13 @@ def run_inference_api(model_id, image_path, task, token, parameters=None):
                  headers = {"Authorization": f"Bearer {token}"}
                  
                  response = requests.post(api_url, headers=headers, json=payload)
-                 response.raise_for_status()
+                 try:
+                     response.raise_for_status()
+                 except requests.exceptions.HTTPError as e:
+                     if response.status_code in [404, 410]:
+                         raise ValueError(f"Model {model_id} is not available on the free Hugging Face Inference API (Status {response.status_code}). Please use 'Local' mode or try a different model.")
+                     raise e
+                     
                  return response.json()
 
 

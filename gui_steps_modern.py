@@ -319,15 +319,15 @@ def create_step2_model(parent, gui_instance):
     gui_instance.cloud_model_entry = ctk.CTkComboBox(
         model_id_frame,
         values=[
-            "google/vit-base-patch16-224", 
+            "google/siglip-base-patch16-224", 
             "microsoft/resnet-50", 
             "nlpconnect/vit-gpt2-image-captioning",
-            "openai/clip-vit-base-patch32"
+            "openai/clip-vit-large-patch14"
         ],
         width=300
     )
     gui_instance.cloud_model_entry.pack(side="left", padx=(10, 0), fill="x", expand=True)
-    gui_instance.cloud_model_entry.set("google/vit-base-patch16-224")
+    gui_instance.cloud_model_entry.set("google/siglip-base-patch16-224")
 
     # Test Connection Button
     test_btn_frame = ctk.CTkFrame(gui_instance.cloud_config_frame, fg_color="transparent")
