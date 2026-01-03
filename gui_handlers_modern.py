@@ -898,8 +898,57 @@ def on_start_processing(gui_instance):
         # Disable inputs to prevent changes during processing
         toggle_input_state(gui_instance, "disabled")
 
-        # Get processing parameters
-        # ... (rest of function)
+        if gui_instance.processing_mode == "local":
+            batch_size = int(gui_instance.batch_size_slider.get()) if gui_instance.batch_size_slider else 1
+        else:
+            batch_size = 50
+
+        # Get Common Parameters
+        categories = [c.strip() for c in gui_instance.categories_entry.get().split(',')] if gui_instance.categories_entry.get() else []
+        keywords = [k.strip() for k in gui_instance.keywords_entry.get().split(',')] if gui_instance.keywords_entry.get() else []
+        threshold = gui_instance.threshold_slider.get() if hasattr(gui_instance, 'threshold_slider') else 0.0
+        truncation = gui_instance.truncation_var.get() if hasattr(gui_instance, 'truncation_var') else True
+        
+        # Get Inference Mode & API Config
+        inference_mode = "local"
+        token = None
+        cloud_model_id = None
+        
+        if hasattr(gui_instance, 'inference_mode_var') and gui_instance.inference_mode_var.get() == "Cloud (HF API)":
+             inference_mode = "cloud"
+             token = gui_instance.api_token_entry.get().strip()
+             cloud_model_id = gui_instance.cloud_model_entry.get().strip()
+
+        # Processing logic...
+        gui_instance.stop_event.clear()
+        gui_instance.processing_start_time = time.time()
+        
+        # Start processing threads based on Source Mode
+        if gui_instance.processing_mode == "daminion":
+             # Daminion Source
+             # args: gui_instance, categories, keywords, items, device, batch_size, truncation, threshold, collection_id, mode, token, cloud_model_id
+             thread = threading.Thread(
+                target=gui_workers.process_daminion_worker,
+                args=(gui_instance, categories, keywords, None, -1, batch_size, truncation, threshold, None, inference_mode, token, cloud_model_id),
+                daemon=True
+            )
+             thread.start()
+
+        else:
+            # Local File Source
+            # args: gui_instance, image_files, categories, keywords, device, batch_size, truncation, threshold, mode, token, cloud_model_id
+            thread = threading.Thread(
+                target=gui_workers.process_images_worker,
+                args=(gui_instance, gui_instance.all_image_files, categories, keywords, -1, batch_size, truncation, threshold, inference_mode, token, cloud_model_id),
+                daemon=True
+            )
+            thread.start()
+
+    except Exception as e:
+        logging.error(f"Failed to start processing: {e}")
+        gui_instance.start_button.configure(text="🚀 Start Processing", state="normal", fg_color="green")
+        gui_instance.stop_button.configure(state="disabled", fg_color="red")
+        toggle_input_state(gui_instance, "normal")
 
 
 def toggle_input_state(gui_instance, state="normal"):
