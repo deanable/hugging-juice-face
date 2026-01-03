@@ -259,6 +259,12 @@ class ModernImageTaggerGUI(ctk.CTk):
     def on_mode_change(self, mode):
         gui_handlers.on_mode_change(self, mode)
 
+    def on_inference_mode_change(self, mode_value=None):
+        gui_handlers.on_inference_mode_change(self, mode_value)
+
+    def on_test_api_connection(self):
+        gui_handlers.on_test_api_connection(self)
+
     def on_scope_change(self, event=None):
         gui_handlers.on_scope_change(self, event)
 
@@ -737,6 +743,13 @@ class ModernImageTaggerGUI(ctk.CTk):
 
     def on_closing(self):
         """Handle application closing."""
+        try:
+             # Save Settings
+             if self.settings_manager:
+                 self.settings_manager.update_from_gui(self)
+        except Exception as e:
+             logging.error(f"Failed to save settings on close: {e}")
+
         if self.daminion_client:
             self.daminion_client.cleanup_temp_files()
         self.destroy()

@@ -191,12 +191,20 @@ def update_step_states(gui_instance):
 
     # Step 4: Ready to process?
     source_ready = (gui_instance.processing_mode == "local" and gui_instance.image_dir) or \
-                  (gui_instance.processing_mode == "daminion" and gui_instance.daminion_client)
-    config_ready = (task == config.MODEL_TASK_IMAGE_TO_TEXT) or \
-                  (task == config.MODEL_TASK_IMAGE_CLASSIFICATION and cats) or \
-                  (task == config.MODEL_TASK_ZERO_SHOT and kws)
+                   (gui_instance.processing_mode == "daminion" and gui_instance.daminion_client)
+    
+    # Model/API Ready?
+    is_cloud = hasattr(gui_instance, 'inference_mode_var') and gui_instance.inference_mode_var.get() == "Cloud (HF API)"
+    if is_cloud:
+        model_ready = bool(gui_instance.api_token_entry.get() and gui_instance.cloud_model_entry.get())
+    else:
+        model_ready = bool(gui_instance.model)
 
-    if source_ready and gui_instance.model and config_ready:
+    config_ready = (task == config.MODEL_TASK_IMAGE_TO_TEXT) or \
+                   (task == config.MODEL_TASK_IMAGE_CLASSIFICATION and cats) or \
+                   (task == config.MODEL_TASK_ZERO_SHOT and kws)
+
+    if source_ready and model_ready and config_ready:
         if gui_instance.start_button:
             gui_instance.start_button.configure(
                 state="normal",
@@ -214,8 +222,8 @@ def update_step_states(gui_instance):
         missing = []
         if not source_ready:
             missing.append("image source")
-        if not gui_instance.model:
-            missing.append("AI model")
+        if not model_ready:
+            missing.append("AI model/API config")
         if not config_ready:
             missing.append("configuration")
         gui_instance.step4_status.configure(
@@ -391,6 +399,33 @@ def on_model_task_change(gui_instance, event=None):
         task = config.DISPLAY_TASK_MAP.get(display_task, "")
         logging.info(f"Model task changed to: {task} (Display: {display_task})")
 
+        # Update Dynamic Cloud Model Suggestions
+        if hasattr(gui_instance, 'cloud_model_entry'):
+            suggestions = {
+                config.MODEL_TASK_IMAGE_CLASSIFICATION: [
+                    "google/vit-base-patch16-224",
+                    "microsoft/resnet-50", 
+                    "facebook/deit-base-distilled-patch16-224"
+                ],
+                config.MODEL_TASK_IMAGE_TO_TEXT: [
+                    "nlpconnect/vit-gpt2-image-captioning",
+                    "Salesforce/blip-image-captioning-base",
+                    "microsoft/git-base"
+                ],
+                config.MODEL_TASK_ZERO_SHOT: [
+                     "openai/clip-vit-base-patch32",
+                     "openai/clip-vit-large-patch14"
+                ]
+            }
+            new_values = suggestions.get(task, ["google/vit-base-patch16-224"])
+            gui_instance.cloud_model_entry.configure(values=new_values)
+            
+            # Reset to first default if current is not valid/custom
+            current_val = gui_instance.cloud_model_entry.get()
+            # If current value is empty or one of the defaults from *another* task, switch it.
+            # Simple heuristic: always switch to default of new task to guide user
+            gui_instance.cloud_model_entry.set(new_values[0])
+
         # If we have models already loaded, filter them by the new task
         if hasattr(gui_instance, 'all_models') and gui_instance.all_models:
             filter_models_by_task(gui_instance, task)
@@ -403,6 +438,50 @@ def on_model_task_change(gui_instance, event=None):
     except Exception as e:
         logging.error(f"Failed to filter models after task change: {e}")
 
+
+
+
+def on_mode_change(gui_instance, mode):
+    """Handle source mode change (Local vs Daminion).
+    
+    Args:
+        gui_instance: Reference to main GUI instance
+        mode: Selected mode ('local' or 'daminion')
+    """
+    logging.info(f"Switching source mode to: {mode}")
+    
+    if mode == "local":
+        # Hide Daminion section
+        if hasattr(gui_instance, 'daminion_section'):
+            gui_instance.daminion_section.pack_forget()
+        
+        # Show Local section
+        if hasattr(gui_instance, 'local_section'):
+            # Pack before status label to maintain order
+            if hasattr(gui_instance, 'step1_status'):
+                gui_instance.local_section.pack(fill="x", pady=(0, 20), before=gui_instance.step1_status)
+            else:
+                gui_instance.local_section.pack(fill="x", pady=(0, 20))
+
+        if gui_instance.step1_status:
+            gui_instance.step1_status.configure(text="✅ Step 1: Ready to select image source", text_color="green")
+            
+    elif mode == "daminion":
+        # Hide Local section
+        if hasattr(gui_instance, 'local_section'):
+            gui_instance.local_section.pack_forget()
+            
+        # Show Daminion section
+        if hasattr(gui_instance, 'daminion_section'):
+             if hasattr(gui_instance, 'step1_status'):
+                 gui_instance.daminion_section.pack(fill="x", padx=20, pady=(0, 20), before=gui_instance.step1_status)
+             else:
+                 gui_instance.daminion_section.pack(fill="x", padx=20, pady=(0, 20))
+            
+        if gui_instance.step1_status:
+             gui_instance.step1_status.configure(text="ℹ️ Enter Daminion server details", text_color="blue")
+    
+    update_step_states(gui_instance)
 
 
 def on_inference_mode_change(gui_instance, mode_value=None):
@@ -481,6 +560,8 @@ def on_test_api_connection(gui_instance):
              # But generic 'post' works for all.
              
              # Success
+             # Save to Registry on success
+             gui_instance.settings_manager.save_api_key_to_registry(token)
              gui_instance.q.put({'type': 'api_test_result', 'success': True, 'msg': f"Model found: {info.pipeline_tag}"})
              
         except Exception as e:
@@ -494,45 +575,6 @@ def on_test_api_connection(gui_instance):
 # Wait, gui_main needs to know how to handle 'api_test_result'.
 # We should update gui_handlers.check_queue or just handle it here if passed via some callback?
 # Standard pattern is queue.
-    """Handle mode change between local and Daminion.
-
-    Args:
-        gui_instance: Reference to main GUI instance
-        mode: "local" or "daminion"
-    """
-    gui_instance.processing_mode = mode
-
-    # Show/hide appropriate sections
-    if mode == "local":
-        gui_instance.local_section.pack(fill="x", pady=(0, 20))
-        gui_instance.daminion_section.pack_forget()
-        gui_instance.scope_var.configure(values=["All Items"])
-
-        # Hide Daminion-specific frames
-        if hasattr(gui_instance, 'daminion_collections_frame'):
-            gui_instance.daminion_collections_frame.pack_forget()
-        else:
-            # Legacy support
-            if hasattr(gui_instance, 'daminion_collection_combo'):
-                gui_instance.daminion_collection_combo.pack_forget()
-            if hasattr(gui_instance, 'refresh_collections_btn'):
-                gui_instance.refresh_collections_btn.pack_forget()
-    else:
-        gui_instance.local_section.pack_forget()
-        gui_instance.daminion_section.pack(fill="x", pady=(0, 20))
-        gui_instance.scope_var.configure(values=["All Items", "Flagged Items", "Untagged Items", "Custom Collection", "Shared Collection"])
-
-        # Show Daminion-specific frames
-        if hasattr(gui_instance, 'daminion_collections_frame'):
-            gui_instance.daminion_collections_frame.pack(fill="x", padx=40, pady=(0, 10))
-        else:
-            # Legacy support
-            if hasattr(gui_instance, 'daminion_collection_combo'):
-                gui_instance.daminion_collection_combo.pack(side="left", padx=(10, 0))
-            if hasattr(gui_instance, 'refresh_collections_btn'):
-                gui_instance.refresh_collections_btn.pack(side="left", padx=(10, 0))
-
-    update_step_states(gui_instance)
 
 
 def on_scope_change(gui_instance, event=None):

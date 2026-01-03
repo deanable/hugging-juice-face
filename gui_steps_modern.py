@@ -215,18 +215,44 @@ def create_step2_model(parent, gui_instance):
     task_frame = ctk.CTkFrame(task_section, fg_color="transparent")
     task_frame.pack(fill="x", padx=40, pady=(0, 15))
 
-    ctk.CTkLabel(task_frame, text="Analysis Type:", width=120, anchor="w").pack(side="left")
-    gui_instance.model_task = ctk.CTkOptionMenu(
-        task_frame,
-        values=list(config.TASK_DISPLAY_MAP.values())
-    )
-    gui_instance.model_task.pack(side="left", padx=(10, 0), fill="x", expand=True)
+    ctk.CTkLabel(task_frame, text="Analysis Type:", width=120, anchor="w", font=ctk.CTkFont(weight="bold")).pack(anchor="w", pady=(0, 10))
+    
+    # Initialize task variable
+    last_task = gui_instance.config_manager.get('last_model_task', config.MODEL_TASK_IMAGE_CLASSIFICATION)
+    # Ensure default is Keywords/Classification
+    if last_task not in config.TASK_DISPLAY_MAP:
+        last_task = config.MODEL_TASK_IMAGE_CLASSIFICATION
+        
+    display_task = config.TASK_DISPLAY_MAP.get(last_task, "Keywords (Auto)")
+    gui_instance.model_task = ctk.StringVar(value=display_task)
 
-    # Set default task
-    last_task = gui_instance.config_manager.get('last_model_task', config.MODEL_TASK_IMAGE_TO_TEXT)
-    display_task = config.TASK_DISPLAY_MAP.get(last_task, "Description")
-    gui_instance.model_task.set(display_task)
-    gui_instance.model_task.configure(command=gui_instance.on_model_task_change)
+    # Radio Buttons for Task
+    r1 = ctk.CTkRadioButton(
+        task_frame, 
+        text="Auto-Tagging (Keywords)", 
+        variable=gui_instance.model_task, 
+        value="Keywords (Auto)",
+        command=gui_instance.on_model_task_change
+    )
+    r1.pack(anchor="w", pady=5, padx=20)
+    
+    r2 = ctk.CTkRadioButton(
+        task_frame, 
+        text="Categorization (Custom)", 
+        variable=gui_instance.model_task, 
+        value="Categories (Custom)",
+        command=gui_instance.on_model_task_change
+    )
+    r2.pack(anchor="w", pady=5, padx=20)
+    
+    r3 = ctk.CTkRadioButton(
+        task_frame, 
+        text="Captioning (Description)", 
+        variable=gui_instance.model_task, 
+        value="Description",
+        command=gui_instance.on_model_task_change
+    )
+    r3.pack(anchor="w", pady=5, padx=20)
 
     # Task description
     gui_instance.task_description = ctk.CTkLabel(
@@ -275,8 +301,8 @@ def create_step2_model(parent, gui_instance):
     )
     gui_instance.api_token_entry.pack(side="left", padx=(10, 0), fill="x", expand=True)
     
-    # Pre-fill token if available
-    saved_token = gui_instance.config_manager.get('hf_token', '')
+    # Pre-fill token if available (from Registry via settings_manager)
+    saved_token = gui_instance.settings_manager.get('hf_api_token', '')
     if saved_token:
         gui_instance.api_token_entry.insert(0, saved_token)
 

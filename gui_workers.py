@@ -279,6 +279,12 @@ def process_daminion_worker(gui_instance, categories, keywords, items=None, devi
                 # Use pipeline directly (simulating single item batch)
                 # Note: Model is already on device.
                 
+                # Unified Processing Pipeline
+                result = None
+                
+                # ----------------
+                # 1. INFERENCE
+                # ----------------
                 if mode == "cloud":
                     # Cloud Inference
                     gui_instance.q.put({'type': 'status_update', 'status': f"API Inference on {item_id}..."})
@@ -291,7 +297,6 @@ def process_daminion_worker(gui_instance, categories, keywords, items=None, devi
 
                     # Use temporary file to send to API
                     with open(thumb_path, "rb") as f:
-                        # We pass the path string to our utility which expects path
                         try:
                             api_result = huggingface_utils.run_inference_api(
                                 cloud_model_id, 
@@ -311,50 +316,20 @@ def process_daminion_worker(gui_instance, categories, keywords, items=None, devi
 
                         except Exception as api_err:
                             logging.error(f"API Error for {item_id}: {api_err}")
-                            raise api_err
-                            
+                            failed_count += 1
+                            continue # Skip this item on API failure
+
                 else:
                     # Local Inference
                     if model_task == config.MODEL_TASK_IMAGE_CLASSIFICATION:
                         result = gui_instance.model(image)
-                        # Use helper
-                        # Classification returns keywords, not category
-                        _, kws, _ = image_processing.extract_tags_from_result(result, model_task, threshold)
-                    if kws:
-                        # Post-process: Split commas and Title Case
-                        processed_kws = []
-                        for kw in kws:
-                            # Split by comma if present (some models return "a, b, c" as one string)
-                            parts = [p.strip() for p in kw.split(',')]
-                            # Title Case and add
-                            processed_kws.extend([p.title() for p in parts if p])
                         
-                        # Deduplicate while preserving order
-                        kws = list(dict.fromkeys(processed_kws))
-
-                        logging.info(f"[GUI] ✓ Item {item_id}: Keywords={kws}")
-                        gui_instance.daminion_client.update_item_metadata(str(item_id), keywords=kws)
-
-
-                elif model_task == config.MODEL_TASK_ZERO_SHOT: # Works for both if normalized
-                    # If mode is local, we already ran inference above? No, wait.
-                    # My split above for 'Cloud' vs 'Local' was partial.
-                    # Let's clean up the flow.
-                    if mode == "local":
+                    elif model_task == config.MODEL_TASK_ZERO_SHOT:
                         result = gui_instance.model(image, candidate_labels=keywords)
                         
-                    # Extract tags
-                    cat, _, _ = image_processing.extract_tags_from_result(result, model_task, threshold)
-                    if cat:
-                        logging.info(f"[GUI] ✓ Item {item_id}: Category={cat}")
-                        gui_instance.daminion_client.update_item_metadata(str(item_id), category=cat)
-
-
-                elif model_task == config.MODEL_TASK_IMAGE_TO_TEXT:
-                    prompt = None
-                    if mode == "local":
+                    elif model_task == config.MODEL_TASK_IMAGE_TO_TEXT:
+                        prompt = None
                         try:
-                            # Try to construct a chat prompt for VLMs (LLaVA, Qwen-VL)
                             if getattr(gui_instance.model.tokenizer, "chat_template", None):
                                 messages = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": "Describe the image."}]}]
                                 prompt = gui_instance.model.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
@@ -364,18 +339,54 @@ def process_daminion_worker(gui_instance, categories, keywords, items=None, devi
                         if prompt:
                              result = gui_instance.model(image, prompt=prompt, generate_kwargs={"max_new_tokens": 200})
                         else:
-                             # Fallback for BLIP/GIT - simple captioning
                              result = gui_instance.model(image)
-                    
-                    # API result is already in 'result' from earlier block if cloud
-                    
-                    _, _, desc = image_processing.extract_tags_from_result(result, model_task, threshold)
-                    if desc:
-                        logging.info(f"[GUI] ✓ Item {item_id}: Generated={desc[:50]}...")
-                        # Pass description to the new description parameter
-                        gui_instance.daminion_client.update_item_metadata(str(item_id), description=desc)
 
-                completed_count += 1
+                # ----------------
+                # 2. EXTRACTION
+                # ----------------
+                if result is None:
+                    logging.warning(f"No result generated for item {item_id}")
+                    failed_count += 1
+                    continue
+
+                cat, kws, desc = image_processing.extract_tags_from_result(result, model_task, threshold)
+
+                # ----------------
+                # 3. UPDATE DAMINION
+                # ----------------
+                updates_made = False
+                
+                # Update Keywords
+                if kws:
+                     # Deduplicate and Title Case
+                     processed_kws = list(dict.fromkeys([
+                         p.strip().title() 
+                         for kw in kws 
+                         for p in kw.split(',') 
+                         if p.strip()
+                     ]))
+                     
+                     if processed_kws:
+                         logging.info(f"[GUI] ✓ Item {item_id}: Keywords={processed_kws}")
+                         gui_instance.daminion_client.update_item_metadata(str(item_id), keywords=processed_kws)
+                         updates_made = True
+
+                # Update Category
+                if cat:
+                     logging.info(f"[GUI] ✓ Item {item_id}: Category={cat}")
+                     gui_instance.daminion_client.update_item_metadata(str(item_id), category=cat)
+                     updates_made = True
+
+                # Update Description
+                if desc:
+                     logging.info(f"[GUI] ✓ Item {item_id}: Generated={desc[:50]}...")
+                     gui_instance.daminion_client.update_item_metadata(str(item_id), description=desc)
+                     updates_made = True
+                
+                if updates_made:
+                    completed_count += 1
+                else:
+                    logging.info(f"[GUI] - Item {item_id}: No tags extracted above threshold.")
                 gui_instance.q.put({'type': 'progress', 'current': completed_count, 'total': len(items)})
 
             except Exception as e:
