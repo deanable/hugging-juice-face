@@ -404,7 +404,96 @@ def on_model_task_change(gui_instance, event=None):
         logging.error(f"Failed to filter models after task change: {e}")
 
 
-def on_mode_change(gui_instance, mode):
+
+def on_inference_mode_change(gui_instance, mode_value=None):
+    """Handle inference mode change (Local vs Cloud).
+    
+    Args:
+        gui_instance: Reference to main GUI instance
+        mode_value: Passed by SegmentedButton (optional)
+    """
+    mode = gui_instance.inference_mode_var.get()
+    
+    # Toggle sections
+    if mode == "Cloud (HF API)":
+        # Cloud Mode
+        gui_instance.cloud_config_frame.pack(fill="x", padx=40, pady=(0, 20), before=gui_instance.local_model_search_section)
+        
+        # Hide local model search frames
+        if hasattr(gui_instance, 'local_model_search_section'):
+            gui_instance.local_model_search_section.pack_forget()
+            
+        # Hide model listbox if we want to force API usage (or keep it for simple list?)
+        # For this design, Cloud Mode replaces searching for local models with specifying an API model ID.
+        if hasattr(gui_instance, 'model_listbox'):
+             # We might want to hide the listbox part or repurpose it?
+             # For now, let's hide the listbox container to avoid confusion.
+             # Need to track its parent to restore it. 
+             # Assuming 'model_section' (the label + list frame) is accessible via children traversal 
+             # or we rely on the fact that existing logic targets 'model_listbox' only when searching.
+             pass
+
+        update_step_states(gui_instance)
+        
+    else:
+        # Local Mode
+        if hasattr(gui_instance, 'cloud_config_frame'):
+            gui_instance.cloud_config_frame.pack_forget()
+            
+        if hasattr(gui_instance, 'local_model_search_section'):
+             # Restore search section
+             gui_instance.local_model_search_section.pack(fill="x", pady=(0, 20), before=gui_instance.cloud_config_frame) 
+             # Note: 'before' logic depends on exact widget stack order, might need 'after' task_description
+        
+        update_step_states(gui_instance)
+
+
+def on_test_api_connection(gui_instance):
+    """Validates the HF Token and Model ID for API access.
+    """
+    token = gui_instance.api_token_entry.get().strip()
+    model_id = gui_instance.cloud_model_entry.get().strip()
+    
+    if not token:
+        show_modern_messagebox(gui_instance, "Missing Token", "Please enter a Hugging Face API Token.", "warning")
+        return
+
+    if not model_id:
+        show_modern_messagebox(gui_instance, "Missing Model ID", "Please enter a Model ID.", "warning")
+        return
+        
+    gui_instance.test_api_button.configure(state="disabled", text="Testing...")
+    gui_instance.api_status_label.configure(text="Connecting...", text_color="blue")
+    
+    # We can do this in a quick inline thread or worker
+    def _test():
+        try:
+             from huggingface_hub import InferenceClient
+             client = InferenceClient(token=token)
+             
+             # Simple non-inference check (get model info) or a tiny inference?
+             # get_model_info verifies readability.
+             from huggingface_hub import HfApi
+             api = HfApi(token=token)
+             info = api.model_info(model_id)
+             
+             # Check if pipeline tag matches expected if possible
+             # But generic 'post' works for all.
+             
+             # Success
+             gui_instance.q.put({'type': 'api_test_result', 'success': True, 'msg': f"Model found: {info.pipeline_tag}"})
+             
+        except Exception as e:
+             gui_instance.q.put({'type': 'api_test_result', 'success': False, 'msg': str(e)})
+
+    thread = threading.Thread(target=_test, daemon=True)
+    thread.start()
+
+# Handlers for API testing need to be added to the queue processor in main, 
+# but we can hack it for now or rely on generic status updates.
+# Wait, gui_main needs to know how to handle 'api_test_result'.
+# We should update gui_handlers.check_queue or just handle it here if passed via some callback?
+# Standard pattern is queue.
     """Handle mode change between local and Daminion.
 
     Args:
@@ -768,11 +857,31 @@ def on_start_processing(gui_instance):
 
         logging.info(f"Starting processing with Device={device}, Batch={batch_size}, Trunc={truncation}, Thr={threshold}")
 
+        # Gather Cloud/Local Params
+        mode = gui_instance.inference_mode_var.get() if hasattr(gui_instance, 'inference_mode_var') else "local"
+        # Convert display string "Cloud (HF API)" -> "cloud"
+        mode_key = "cloud" if "Cloud" in mode else "local"
+        
+        token = None
+        cloud_model_id = None
+        
+        if mode_key == "cloud":
+            token = gui_instance.api_token_entry.get().strip()
+            cloud_model_id = gui_instance.cloud_model_entry.get().strip()
+            
+            if not token or not cloud_model_id:
+                show_modern_messagebox(gui_instance, "Missing Credentials", "Please enter HF Token and Model ID for Cloud mode.", "error")
+                gui_instance.start_button.configure(text="🚀 Start Processing", state="normal", fg_color="green")
+                gui_instance.stop_button.configure(state="disabled", fg_color="red")
+                return
+                
+            # Allow invalid model selection check? We rely on worker to fail if so.
+
         # Determine target worker
         if gui_instance.processing_mode == "local":
             image_files = scan_image_directory(gui_instance.image_dir)
             target_worker = gui_workers.process_images_worker
-            worker_args = (gui_instance, image_files, categories, keywords, device, batch_size, truncation, threshold)
+            worker_args = (gui_instance, image_files, categories, keywords, device, batch_size, truncation, threshold, mode_key, token, cloud_model_id)
         else: # daminion
             target_worker = gui_workers.process_daminion_worker
             
@@ -798,9 +907,9 @@ def on_start_processing(gui_instance):
                     gui_instance.start_button.configure(text="🚀 Start Processing", state="normal", fg_color="green")
                     gui_instance.stop_button.configure(state="disabled", fg_color="red")
                     return
+            
+            worker_args = (gui_instance, categories, keywords, None, device, batch_size, truncation, threshold, collection_id, mode_key, token, cloud_model_id)
 
-            # Daminion worker signature update
-            worker_args = (gui_instance, categories, keywords, None, device, batch_size, truncation, threshold, collection_id)
 
         # Start processing in worker thread
         thread = threading.Thread(

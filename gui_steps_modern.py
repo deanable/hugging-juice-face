@@ -237,9 +237,92 @@ def create_step2_model(parent, gui_instance):
     )
     gui_instance.task_description.pack(anchor="w", padx=40, pady=(5, 15))
 
-    # Model search section
-    search_section = ctk.CTkFrame(main_frame)
-    search_section.pack(fill="x", pady=(0, 20))
+    # Processing Mode Selection (Local vs Cloud)
+    mode_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+    mode_frame.pack(fill="x", padx=40, pady=(0, 15))
+    
+    ctk.CTkLabel(mode_frame, text="Processing Mode:", width=120, anchor="w").pack(side="left")
+    
+    gui_instance.inference_mode_var = ctk.StringVar(value="local")
+    gui_instance.inference_mode_selector = ctk.CTkSegmentedButton(
+        mode_frame,
+        values=["Local (Offline)", "Cloud (HF API)"],
+        variable=gui_instance.inference_mode_var,
+        command=gui_instance.on_inference_mode_change
+    )
+    gui_instance.inference_mode_selector.pack(side="left", padx=(10, 0), fill="x", expand=True)
+
+    # Cloud Configuration Section (Initially Hidden)
+    gui_instance.cloud_config_frame = ctk.CTkFrame(main_frame)
+    # Don't pack initially, shown by handler if mode is cloud
+    
+    cloud_label = ctk.CTkLabel(
+        gui_instance.cloud_config_frame,
+        text="☁️ Cloud API Configuration",
+        font=ctk.CTkFont(size=14, weight="bold")
+    )
+    cloud_label.pack(anchor="w", padx=20, pady=(15, 10))
+    
+    # API Token Input
+    token_frame = ctk.CTkFrame(gui_instance.cloud_config_frame, fg_color="transparent")
+    token_frame.pack(fill="x", padx=40, pady=(0, 10))
+    
+    ctk.CTkLabel(token_frame, text="HF API Token:", width=120, anchor="w").pack(side="left")
+    gui_instance.api_token_entry = ctk.CTkEntry(
+        token_frame,
+        placeholder_text="hf_...",
+        show="*"
+    )
+    gui_instance.api_token_entry.pack(side="left", padx=(10, 0), fill="x", expand=True)
+    
+    # Pre-fill token if available
+    saved_token = gui_instance.config_manager.get('hf_token', '')
+    if saved_token:
+        gui_instance.api_token_entry.insert(0, saved_token)
+
+    # Model ID Input
+    model_id_frame = ctk.CTkFrame(gui_instance.cloud_config_frame, fg_color="transparent")
+    model_id_frame.pack(fill="x", padx=40, pady=(0, 15))
+    
+    ctk.CTkLabel(model_id_frame, text="Model ID:", width=120, anchor="w").pack(side="left")
+    gui_instance.cloud_model_entry = ctk.CTkComboBox(
+        model_id_frame,
+        values=[
+            "google/vit-base-patch16-224", 
+            "microsoft/resnet-50", 
+            "nlpconnect/vit-gpt2-image-captioning",
+            "openai/clip-vit-base-patch32"
+        ],
+        width=300
+    )
+    gui_instance.cloud_model_entry.pack(side="left", padx=(10, 0), fill="x", expand=True)
+    gui_instance.cloud_model_entry.set("google/vit-base-patch16-224")
+
+    # Test Connection Button
+    test_btn_frame = ctk.CTkFrame(gui_instance.cloud_config_frame, fg_color="transparent")
+    test_btn_frame.pack(fill="x", padx=40, pady=(0, 15))
+    
+    gui_instance.test_api_button = ctk.CTkButton(
+        test_btn_frame,
+        text="📡 Test API Connection",
+        command=gui_instance.on_test_api_connection,
+        width=160
+    )
+    gui_instance.test_api_button.pack(side="left")
+    
+    gui_instance.api_status_label = ctk.CTkLabel(
+        test_btn_frame,
+        text="",
+        text_color="gray"
+    )
+    gui_instance.api_status_label.pack(side="left", padx=(15, 0))
+
+    # Model search section (Renamed/wrapped to be togglable)
+    gui_instance.local_model_search_section = ctk.CTkFrame(main_frame, fg_color="transparent")
+    gui_instance.local_model_search_section.pack(fill="x", pady=(0, 20))
+    # We will repack the search content into this frame or just control visibility of the frame below
+    
+    search_section = gui_instance.local_model_search_section # Use this as the parent for existing search code
 
     search_label = ctk.CTkLabel(
         search_section,

@@ -1,6 +1,7 @@
 """
 Worker thread functions for the Image Tagger application.
 Handles background processing to keep the GUI responsive.
+Supports both Local (Offline) and Cloud (HF API) inference modes.
 """
 
 import logging
@@ -160,7 +161,7 @@ def find_local_models_worker(gui_instance):
         gui_instance.q.put({'type': 'error', 'error': f"Failed to scan local model cache: {e}"})
 
 
-def process_daminion_worker(gui_instance, categories, keywords, items=None, device=-1, batch_size=8, truncation=True, threshold=0.0, collection_id=None):
+def process_daminion_worker(gui_instance, categories, keywords, items=None, device=-1, batch_size=8, truncation=True, threshold=0.0, collection_id=None, mode="local", token=None, cloud_model_id=None):
     """Worker thread for processing Daminion items.
 
     Args:
@@ -173,8 +174,11 @@ def process_daminion_worker(gui_instance, categories, keywords, items=None, devi
         truncation: Whether to truncate inputs
         threshold: Confidence threshold
         collection_id: ID of shared collection to process (optional)
+        mode: "local" or "cloud"
+        token: HF API Token (if mode="cloud")
+        cloud_model_id: Model ID for API (if mode="cloud")
     """
-    logging.info(f"[GUI] ========== DAMINION PROCESSING WORKER STARTED ==========")
+    logging.info(f"[GUI] ========== DAMINION PROCESSING WORKER STARTED ({mode.upper()}) ==========")
     logging.info(f"[GUI] Params: Batch={batch_size}, Trunc={truncation}, Thr={threshold}, Collection ID={collection_id}")
     
     # ... (rest of Daminion logic remains mostly same, but we should use the new threshold)
@@ -182,15 +186,19 @@ def process_daminion_worker(gui_instance, categories, keywords, items=None, devi
     # Ideally Daminion should also be batched, but that requires refactoring DaminionClient heavily.
     # We will just use the threshold in the loop.
 
-    display_task = gui_instance.model_task.get()
-    model_task = config.DISPLAY_TASK_MAP.get(display_task, "")
+    display_task = gui_instance.model_task.get() if gui_instance.model_task else config.MODEL_TASK_IMAGE_TO_TEXT
+    model_task = config.DISPLAY_TASK_MAP.get(display_task, config.MODEL_TASK_IMAGE_TO_TEXT)
     
     if not gui_instance.daminion_client:
         gui_instance.q.put({'type': 'error', 'error': "Daminion client not initialized"})
         return
 
-    if not gui_instance.model:
-        gui_instance.q.put({'type': 'error', 'error': "Model not loaded"})
+    if mode == "local" and not gui_instance.model:
+        gui_instance.q.put({'type': 'error', 'error': "Model not loaded (Local Mode)"})
+        return
+
+    if mode == "cloud" and not (token and cloud_model_id):
+        gui_instance.q.put({'type': 'error', 'error': "Missing API credentials (Cloud Mode)"})
         return
 
     try:
@@ -271,11 +279,47 @@ def process_daminion_worker(gui_instance, categories, keywords, items=None, devi
                 # Use pipeline directly (simulating single item batch)
                 # Note: Model is already on device.
                 
-                if model_task == config.MODEL_TASK_IMAGE_CLASSIFICATION:
-                    result = gui_instance.model(image)
-                    # Use helper
-                    # Classification returns keywords, not category
-                    _, kws, _ = image_processing.extract_tags_from_result(result, model_task, threshold)
+                if mode == "cloud":
+                    # Cloud Inference
+                    gui_instance.q.put({'type': 'status_update', 'status': f"API Inference on {item_id}..."})
+                    
+                    params = {}
+                    if model_task == config.MODEL_TASK_ZERO_SHOT:
+                        params["candidate_labels"] = keywords
+                    elif model_task == config.MODEL_TASK_IMAGE_TO_TEXT:
+                        params["generate_kwargs"] = {"max_new_tokens": 200}
+
+                    # Use temporary file to send to API
+                    with open(thumb_path, "rb") as f:
+                        # We pass the path string to our utility which expects path
+                        try:
+                            api_result = huggingface_utils.run_inference_api(
+                                cloud_model_id, 
+                                str(thumb_path), 
+                                model_task, 
+                                token, 
+                                parameters=params
+                            )
+                            # Normalize Result
+                            if model_task == config.MODEL_TASK_ZERO_SHOT and isinstance(api_result, list):
+                                # Convert [{"label": "A", "score": 0.9}, ...] to {'labels': ['A'], 'scores': [0.9]}
+                                labels = [x.get('label') for x in api_result]
+                                scores = [x.get('score') for x in api_result]
+                                result = {'labels': labels, 'scores': scores}
+                            else:
+                                result = api_result
+
+                        except Exception as api_err:
+                            logging.error(f"API Error for {item_id}: {api_err}")
+                            raise api_err
+                            
+                else:
+                    # Local Inference
+                    if model_task == config.MODEL_TASK_IMAGE_CLASSIFICATION:
+                        result = gui_instance.model(image)
+                        # Use helper
+                        # Classification returns keywords, not category
+                        _, kws, _ = image_processing.extract_tags_from_result(result, model_task, threshold)
                     if kws:
                         # Post-process: Split commas and Title Case
                         processed_kws = []
@@ -291,30 +335,40 @@ def process_daminion_worker(gui_instance, categories, keywords, items=None, devi
                         logging.info(f"[GUI] ✓ Item {item_id}: Keywords={kws}")
                         gui_instance.daminion_client.update_item_metadata(str(item_id), keywords=kws)
 
-                elif model_task == config.MODEL_TASK_ZERO_SHOT:
-                    result = gui_instance.model(image, candidate_labels=keywords)
-                    # Zero-Shot returns category, not keywords
+
+                elif model_task == config.MODEL_TASK_ZERO_SHOT: # Works for both if normalized
+                    # If mode is local, we already ran inference above? No, wait.
+                    # My split above for 'Cloud' vs 'Local' was partial.
+                    # Let's clean up the flow.
+                    if mode == "local":
+                        result = gui_instance.model(image, candidate_labels=keywords)
+                        
+                    # Extract tags
                     cat, _, _ = image_processing.extract_tags_from_result(result, model_task, threshold)
                     if cat:
                         logging.info(f"[GUI] ✓ Item {item_id}: Category={cat}")
                         gui_instance.daminion_client.update_item_metadata(str(item_id), category=cat)
 
+
                 elif model_task == config.MODEL_TASK_IMAGE_TO_TEXT:
                     prompt = None
-                    try:
-                        # Try to construct a chat prompt for VLMs (LLaVA, Qwen-VL)
-                        if getattr(gui_instance.model.tokenizer, "chat_template", None):
-                            messages = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": "Describe the image."}]}]
-                            prompt = gui_instance.model.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-                    except Exception:
-                        pass
+                    if mode == "local":
+                        try:
+                            # Try to construct a chat prompt for VLMs (LLaVA, Qwen-VL)
+                            if getattr(gui_instance.model.tokenizer, "chat_template", None):
+                                messages = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": "Describe the image."}]}]
+                                prompt = gui_instance.model.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+                        except Exception:
+                            pass
+                        
+                        if prompt:
+                             result = gui_instance.model(image, prompt=prompt, generate_kwargs={"max_new_tokens": 200})
+                        else:
+                             # Fallback for BLIP/GIT - simple captioning
+                             result = gui_instance.model(image)
                     
-                    if prompt:
-                         result = gui_instance.model(image, prompt=prompt, generate_kwargs={"max_new_tokens": 200})
-                    else:
-                         # Fallback for BLIP/GIT - simple captioning
-                         result = gui_instance.model(image)
-
+                    # API result is already in 'result' from earlier block if cloud
+                    
                     _, _, desc = image_processing.extract_tags_from_result(result, model_task, threshold)
                     if desc:
                         logging.info(f"[GUI] ✓ Item {item_id}: Generated={desc[:50]}...")
@@ -336,7 +390,7 @@ def process_daminion_worker(gui_instance, categories, keywords, items=None, devi
         gui_instance.q.put({'type': 'error', 'error': f"Daminion processing failed: {e}"})
 
 
-def process_images_worker(gui_instance, image_files, categories, keywords, device=-1, batch_size=8, truncation=True, threshold=0.0):
+def process_images_worker(gui_instance, image_files, categories, keywords, device=-1, batch_size=8, truncation=True, threshold=0.0, mode="local", token=None, cloud_model_id=None):
     """Worker thread for processing local images using batch processing.
 
     Args:
@@ -348,8 +402,11 @@ def process_images_worker(gui_instance, image_files, categories, keywords, devic
         batch_size: Batch size for inference
         truncation: Whether to truncate inputs
         threshold: Confidence threshold
+        mode: "local" or "cloud"
+        token: HF API Token
+        cloud_model_id: Model ID for API
     """
-    display_task = gui_instance.model_task.get().strip()
+    display_task = gui_instance.model_task.get().strip() if gui_instance.model_task else ""
     model_task = config.DISPLAY_TASK_MAP.get(display_task, "")
     results = []
     
@@ -433,38 +490,77 @@ def process_images_worker(gui_instance, image_files, categories, keywords, devic
             # Truncation is generally for text tokenization, not needed for pure image classification pipelines.
             # We remove it to avoid TypeError.
             
-            if model_task == config.MODEL_TASK_IMAGE_CLASSIFICATION:
-                # Standard classification models (ViT, ResNet) do not support candidate_labels.
-                # They output fixed classes (e.g. ImageNet).
-                results = gui_instance.model(batch_images, **kwargs)
-                
-            elif model_task == config.MODEL_TASK_ZERO_SHOT:
-                kwargs["candidate_labels"] = keywords
-                results = gui_instance.model(batch_images, **kwargs)
-                
-            elif model_task == config.MODEL_TASK_IMAGE_TO_TEXT:
-                # Handle Prompting:
-                # 1. Instruction-tuned VLMs (Qwen-VL, LLaVA) need a chat template with "Describe the image" instruction.
-                # 2. Standard Captioning Models (BLIP, ViT-GPT2) generate captions automatically without a prompt.
-                
-                prompt = None
-                if getattr(gui_instance.model.tokenizer, "chat_template", None):
-                    try:
-                        messages = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": "Describe the image."}]}]
-                        prompt = gui_instance.model.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-                    except Exception as e:
-                        logging.warning(f"Failed to apply chat template (falling back to no prompt): {e}")
-                        prompt = None
-                
-                if prompt:
-                    kwargs["prompt"] = prompt
-                
-                kwargs["generate_kwargs"] = {"max_new_tokens": 200}
-                
-                results = gui_instance.model(batch_images, **kwargs)
+            if mode == "cloud":
+                 # API Mode - Force batch_size=1 ideally, or just loop one by one
+                 # The InferenceClient can take a list, but safer to do 1 by 1 for error handling initially
+                 # or map it.
+                 # Let's use simple loop for API to handle rate limits gracefully per image
+                 results = []
+                 for img_path in current_batch_valid_paths:
+                      try:
+                          params = {}
+                          if model_task == config.MODEL_TASK_ZERO_SHOT:
+                              params["candidate_labels"] = keywords
+                          elif model_task == config.MODEL_TASK_IMAGE_TO_TEXT:
+                              params["generate_kwargs"] = {"max_new_tokens": 200}
+
+                          api_res = huggingface_utils.run_inference_api(
+                                cloud_model_id, 
+                                str(img_path), 
+                                model_task, 
+                                token, 
+                                parameters=params
+                          )
+                          
+                          # Normalize
+                          if model_task == config.MODEL_TASK_ZERO_SHOT and isinstance(api_res, list):
+                                labels = [x.get('label') for x in api_res]
+                                scores = [x.get('score') for x in api_res]
+                                results.append({'labels': labels, 'scores': scores})
+                          else:
+                                results.append(api_res)
+                      except Exception as e:
+                          logging.error(f"API failed for {img_path}: {e}")
+                          results.append(None) # Signal error
+
+            else:
+                # Local Mode Implementation
+                if model_task == config.MODEL_TASK_IMAGE_CLASSIFICATION:
+                    # Standard classification models (ViT, ResNet) do not support candidate_labels.
+                    # They output fixed classes (e.g. ImageNet).
+                    results = gui_instance.model(batch_images, **kwargs)
+                    
+                elif model_task == config.MODEL_TASK_ZERO_SHOT:
+                    kwargs["candidate_labels"] = keywords
+                    results = gui_instance.model(batch_images, **kwargs)
+                    
+                elif model_task == config.MODEL_TASK_IMAGE_TO_TEXT:
+                    # Handle Prompting:
+                    # 1. Instruction-tuned VLMs (Qwen-VL, LLaVA) need a chat template with "Describe the image" instruction.
+                    # 2. Standard Captioning Models (BLIP, ViT-GPT2) generate captions automatically without a prompt.
+                    
+                    prompt = None
+                    if getattr(gui_instance.model.tokenizer, "chat_template", None):
+                        try:
+                            messages = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": "Describe the image."}]}]
+                            prompt = gui_instance.model.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+                        except Exception as e:
+                            logging.warning(f"Failed to apply chat template (falling back to no prompt): {e}")
+                            prompt = None
+                    
+                    if prompt:
+                        kwargs["prompt"] = prompt
+                    
+                    kwargs["generate_kwargs"] = {"max_new_tokens": 200}
+                    
+                    results = gui_instance.model(batch_images, **kwargs)
 
             # Process results
             for path, result in zip(current_batch_valid_paths, results):
+                if result is None:
+                    error_count += 1
+                    continue
+                    
                 try:
                     cat, kws, desc = image_processing.extract_tags_from_result(result, model_task, threshold)
                     

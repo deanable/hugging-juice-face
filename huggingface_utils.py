@@ -6,7 +6,7 @@ import shutil
 from pathlib import Path
 from functools import partial
 from tqdm import tqdm
-from huggingface_hub import list_models, hf_hub_download, snapshot_download, HfApi
+from huggingface_hub import list_models, hf_hub_download, snapshot_download, HfApi, InferenceClient
 from huggingface_hub.constants import HUGGINGFACE_HUB_CACHE
 from requests.exceptions import HTTPError
 from transformers import pipeline, AutoConfig, AutoTokenizer
@@ -522,4 +522,128 @@ def load_model(model_id, task, progress_queue=None, token=None, device=-1):
         logging.exception(f"Failed to load model (sync): {model_id}")
         if progress_queue:
             progress_queue.put(("error", f"Failed to load model: {e}"))
+        raise
+
+# -------------------------------------------------------------------------
+# API Inference Support
+# -------------------------------------------------------------------------
+
+def rate_limit_handler(max_retries=3, initial_delay=1.0):
+    """
+    Decorator to handle rate limiting and network errors for API calls.
+    """
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            retries = 0
+            delay = initial_delay
+            
+            while True:
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    # Check for HTTP 429 (Rate Limit)
+                    is_rate_limit = False
+                    if hasattr(e, "response") and hasattr(e.response, "status_code"):
+                         if e.response.status_code == 429:
+                              is_rate_limit = True
+                    # Also check for message content if exception type is generic
+                    if "429" in str(e) or "Rate limit" in str(e):
+                         is_rate_limit = True
+
+                    if is_rate_limit:
+                        if retries >= max_retries:
+                            logging.error(f"Max retries exceeded for API call: {e}")
+                            raise
+                        
+                        # Check for retry-after header
+                        wait_time = delay
+                        if hasattr(e, "response") and hasattr(e.response, "headers"):
+                             if "retry-after" in e.response.headers:
+                                  try:
+                                      wait_time = float(e.response.headers["retry-after"]) + 1.0 # Add buffer
+                                  except:
+                                      pass
+
+                        logging.warning(f"Rate limited. Waiting {wait_time:.2f}s before retry {retries+1}/{max_retries}...")
+                        time.sleep(wait_time)
+                        retries += 1
+                        delay *= 2 # Exponential backoff for subsequent defaults
+                    
+                    elif hasattr(e, "response") and hasattr(e.response, "status_code") and e.response.status_code >= 500:
+                         # Server error, retry
+                         if retries >= max_retries:
+                            logging.error(f"Max retries exceeded for server error: {e}")
+                            raise
+                         logging.warning(f"Server error {e.response.status_code}. Retrying {retries+1}/{max_retries}...")
+                         time.sleep(delay)
+                         retries += 1
+                         delay *= 2
+                    
+                    else:
+                        # Other errors (Auth, BadRequest) - do not retry
+                        raise
+        return wrapper
+    return decorator
+
+
+@rate_limit_handler(max_retries=3)
+def run_inference_api(model_id, image_path, task, token, parameters=None):
+    """
+    Runs inference using the Hugging Face Inference API.
+    
+    Args:
+        model_id: The model ID on HF Hub.
+        image_path: Path to local image file.
+        task: The task type (e.g. 'image-classification').
+        token: HF API Token.
+        parameters: Optional parameters dict.
+        
+    Returns:
+        The raw JSON response from the API.
+    """
+    client = InferenceClient(token=token)
+    
+    # Map internal task names to API tasks if needed, though they usually match.
+    # We mainly need to handle the input type.
+    
+    # For image tasks, we pass the file.
+    try:
+        # Check image validity
+        if not Path(image_path).exists():
+             raise FileNotFoundError(f"Image not found: {image_path}")
+        
+        # InferenceClient.predict() or specific task methods can be used.
+        # .image_classification() is specific.
+        # .image_to_text() is specific.
+        
+        logging.info(f"calling API for {task} on {model_id}...")
+        
+        if task == config.MODEL_TASK_IMAGE_CLASSIFICATION:
+             return client.image_classification(image_path, model=model_id)
+             
+        elif task == config.MODEL_TASK_ZERO_SHOT:
+             # Zero shot requires candidate labels in parameters
+             if not parameters or "candidate_labels" not in parameters:
+                  raise ValueError("candidate_labels required for zero-shot api")
+             
+             # The python client might not have a direct zero_shot_image_classification method exposed 
+             # in the same way or arguments might differ.
+             # Using the generic post request if specific method is missing, 
+             # but check client definition. client.zero_shot_image_classification exists in newer versions.
+             
+             return client.zero_shot_image_classification(
+                  image_path, 
+                  model=model_id, 
+                  candidate_labels=parameters["candidate_labels"]
+             )
+
+        elif task == config.MODEL_TASK_IMAGE_TO_TEXT:
+             return client.image_to_text(image_path, model=model_id, generate_kwargs=parameters.get("generate_kwargs"))
+        
+        else:
+             # Fallback to generic
+             return client.post(json={"inputs": image_path}, model=model_id, task=task)
+
+    except Exception as e:
+        logging.error(f"API Inference failed: {e}")
         raise

@@ -420,7 +420,8 @@ class ModernImageTaggerGUI(ctk.CTk):
             'daminion_connected': lambda d: self._on_daminion_connected(d if isinstance(d, dict) and 'item_count' in d else {'item_count': d.get('total_items', 0) if isinstance(d, dict) else 0}),
             'daminion_collections': self._on_daminion_collections,
             'models_found': self._on_models_found,
-            'progress_done': lambda d: self._on_processing_done(d if isinstance(d, dict) else {'processed_count': 0, 'error_count': 0})
+            'progress_done': lambda d: self._on_processing_done(d if isinstance(d, dict) else {'processed_count': 0, 'error_count': 0}),
+            'api_test_result': self._on_api_test_result
         }
 
         handler = handlers.get(message_type)
@@ -428,6 +429,23 @@ class ModernImageTaggerGUI(ctk.CTk):
             handler(data)
         else:
             logging.warning(f"Unknown message type: {message_type}")
+
+    def _on_api_test_result(self, data):
+        """Handle API test result message."""
+        success = data.get('success', False)
+        msg = data.get('msg', 'Unknown result')
+        
+        if self.test_api_button:
+            self.test_api_button.configure(state="normal", text="📡 Test API Connection")
+            
+        if success:
+            if self.api_status_label:
+                self.api_status_label.configure(text="✅ Connection Valid", text_color="green")
+            gui_handlers.show_modern_messagebox(self, "Success", f"API Connection Successful!\n\n{msg}", "success")
+        else:
+            if self.api_status_label:
+                self.api_status_label.configure(text="❌ Connection Failed", text_color="red")
+            gui_handlers.show_modern_messagebox(self, "Connection Failed", f"Could not connect to HF API:\n{msg}", "error")
 
     def _handle_progress_max(self, data):
         """Handle progress_max message."""
