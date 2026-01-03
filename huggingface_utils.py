@@ -3,6 +3,7 @@
 import logging
 import os
 import shutil
+import base64
 from pathlib import Path
 from functools import partial
 from tqdm import tqdm
@@ -626,16 +627,26 @@ def run_inference_api(model_id, image_path, task, token, parameters=None):
              if not parameters or "candidate_labels" not in parameters:
                   raise ValueError("candidate_labels required for zero-shot api")
              
-             # The python client might not have a direct zero_shot_image_classification method exposed 
-             # in the same way or arguments might differ.
-             # Using the generic post request if specific method is missing, 
-             # but check client definition. client.zero_shot_image_classification exists in newer versions.
-             
-             return client.zero_shot_image_classification(
-                  image_path, 
-                  model=model_id, 
-                  candidate_labels=parameters["candidate_labels"]
-             )
+             try:
+                 return client.zero_shot_image_classification(
+                      image_path, 
+                      model=model_id, 
+                      candidate_labels=parameters["candidate_labels"]
+                 )
+             except Exception as e:
+                 # Fallback for StopIteration or other client issues
+                 logging.warning(f"Native zero-shot client failed ({type(e).__name__}), falling back to raw JSON API...")
+                 
+                 with open(image_path, "rb") as img_f:
+                     b64_image = base64.b64encode(img_f.read()).decode("utf-8")
+                 
+                 payload = {
+                     "inputs": b64_image,
+                     "parameters": {"candidate_labels": parameters["candidate_labels"]}
+                 }
+                 # Explicitly passing model and task to post to ensure correct routing
+                 return client.post(json=payload, model=model_id, task=task)
+
 
         elif task == config.MODEL_TASK_IMAGE_TO_TEXT:
              return client.image_to_text(image_path, model=model_id, generate_kwargs=parameters.get("generate_kwargs"))

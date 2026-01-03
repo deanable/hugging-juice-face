@@ -289,6 +289,7 @@ def process_daminion_worker(gui_instance, categories, keywords, items=None, devi
                 # ----------------
                 # 1. INFERENCE
                 # ----------------
+                if mode == "cloud":
                     # Cloud Inference
                     gui_instance.q.put({'type': 'status_update', 'status': f"API Inference on {item_id}..."})
                     
