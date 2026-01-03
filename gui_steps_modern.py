@@ -151,6 +151,11 @@ def create_step1_source(parent, gui_instance):
     )
     gui_instance.daminion_password_entry.pack(side="left", padx=(10, 0), fill="x", expand=True)
 
+    # Pre-fill password (Registry)
+    saved_pwd = gui_instance.settings_manager.load_daminion_password_from_registry()
+    if saved_pwd:
+         gui_instance.daminion_password_entry.insert(0, saved_pwd)
+
     # Connect button and status
     connect_frame = ctk.CTkFrame(gui_instance.daminion_section, fg_color="transparent")
     connect_frame.pack(fill="x", padx=40, pady=(10, 15))

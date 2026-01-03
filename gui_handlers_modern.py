@@ -449,6 +449,7 @@ def on_mode_change(gui_instance, mode):
         mode: Selected mode ('local' or 'daminion')
     """
     logging.info(f"Switching source mode to: {mode}")
+    gui_instance.processing_mode = mode
     
     if mode == "local":
         # Hide Daminion section
@@ -496,21 +497,20 @@ def on_inference_mode_change(gui_instance, mode_value=None):
     # Toggle sections
     if mode == "Cloud (HF API)":
         # Cloud Mode
-        gui_instance.cloud_config_frame.pack(fill="x", padx=40, pady=(0, 20), before=gui_instance.local_model_search_section)
-        
-        # Hide local model search frames
+        # Hide local model search frames first to avoid conflict
         if hasattr(gui_instance, 'local_model_search_section'):
             gui_instance.local_model_search_section.pack_forget()
-            
-        # Hide model listbox if we want to force API usage (or keep it for simple list?)
-        # For this design, Cloud Mode replaces searching for local models with specifying an API model ID.
-        if hasattr(gui_instance, 'model_listbox'):
-             # We might want to hide the listbox part or repurpose it?
-             # For now, let's hide the listbox container to avoid confusion.
-             # Need to track its parent to restore it. 
-             # Assuming 'model_section' (the label + list frame) is accessible via children traversal 
-             # or we rely on the fact that existing logic targets 'model_listbox' only when searching.
-             pass
+
+        # Show Cloud Config
+        # Pack after the mode selector to ensure correct order
+        if hasattr(gui_instance, 'inference_mode_selector') and gui_instance.inference_mode_selector.master:
+             gui_instance.cloud_config_frame.pack(fill="x", padx=40, pady=(0, 20), after=gui_instance.inference_mode_selector.master)
+        else:
+             gui_instance.cloud_config_frame.pack(fill="x", padx=40, pady=(0, 20))
+        
+        # Hide model listbox if we want to force API usage
+        # (Optional: keep it if we want to allow hybrid, but sticking to design)
+        # gui_instance.model_section... (Leaving standard list visible for reference)
 
         update_step_states(gui_instance)
         
@@ -521,8 +521,10 @@ def on_inference_mode_change(gui_instance, mode_value=None):
             
         if hasattr(gui_instance, 'local_model_search_section'):
              # Restore search section
-             gui_instance.local_model_search_section.pack(fill="x", pady=(0, 20), before=gui_instance.cloud_config_frame) 
-             # Note: 'before' logic depends on exact widget stack order, might need 'after' task_description
+             if hasattr(gui_instance, 'inference_mode_selector') and gui_instance.inference_mode_selector.master:
+                 gui_instance.local_model_search_section.pack(fill="x", pady=(0, 20), after=gui_instance.inference_mode_selector.master)
+             else:
+                 gui_instance.local_model_search_section.pack(fill="x", pady=(0, 20))
         
         update_step_states(gui_instance)
 

@@ -81,6 +81,27 @@ class SettingsManager:
         except Exception as e:
             logging.error(f"Registry Save Error: {e}")
 
+    def load_daminion_password_from_registry(self) -> str:
+        """Load Daminion Password from Windows Registry."""
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, REGISTRY_PATH) as key:
+                value, _ = winreg.QueryValueEx(key, "DaminionPassword")
+                return str(value)
+        except FileNotFoundError:
+            return ""
+        except Exception as e:
+            logging.error(f"Registry Load Error (Daminion): {e}")
+            return ""
+
+    def save_daminion_password_to_registry(self, password: str):
+        """Save Daminion Password to Windows Registry."""
+        try:
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, REGISTRY_PATH) as key:
+                winreg.SetValueEx(key, "DaminionPassword", 0, winreg.REG_SZ, password)
+            logging.info("Saved Daminion Password to Registry.")
+        except Exception as e:
+            logging.error(f"Registry Save Error (Daminion): {e}")
+
     def get(self, key: str, default: Any = None) -> Any:
         return self.settings.get(key, default)
 

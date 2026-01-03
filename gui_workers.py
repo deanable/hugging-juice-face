@@ -48,6 +48,10 @@ def connect_daminion_worker(gui_instance, url, username, password):
             gui_instance.config_manager.set('daminion_url', url)
             gui_instance.config_manager.set('daminion_username', username)
             gui_instance.config_manager.save_config()
+            
+            # Save Password to Registry (Security)
+            if hasattr(gui_instance, 'settings_manager'):
+                gui_instance.settings_manager.save_daminion_password_to_registry(password)
 
             logging.info(f"[GUI] Notifying GUI of successful connection...")
             gui_instance.q.put({'type': 'daminion_connected', 'status': status})
