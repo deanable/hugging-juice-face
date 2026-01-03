@@ -289,7 +289,6 @@ def process_daminion_worker(gui_instance, categories, keywords, items=None, devi
                 # ----------------
                 # 1. INFERENCE
                 # ----------------
-                if mode == "cloud":
                     # Cloud Inference
                     gui_instance.q.put({'type': 'status_update', 'status': f"API Inference on {item_id}..."})
                     
@@ -299,29 +298,28 @@ def process_daminion_worker(gui_instance, categories, keywords, items=None, devi
                     elif model_task == config.MODEL_TASK_IMAGE_TO_TEXT:
                         params["generate_kwargs"] = {"max_new_tokens": 200}
 
-                    # Use temporary file to send to API
-                    with open(thumb_path, "rb") as f:
-                        try:
-                            api_result = huggingface_utils.run_inference_api(
-                                cloud_model_id, 
-                                str(thumb_path), 
-                                model_task, 
-                                token, 
-                                parameters=params
-                            )
-                            # Normalize Result
-                            if model_task == config.MODEL_TASK_ZERO_SHOT and isinstance(api_result, list):
-                                # Convert [{"label": "A", "score": 0.9}, ...] to {'labels': ['A'], 'scores': [0.9]}
-                                labels = [x.get('label') for x in api_result]
-                                scores = [x.get('score') for x in api_result]
-                                result = {'labels': labels, 'scores': scores}
-                            else:
-                                result = api_result
+                    # Use temporary file (thumbnail)
+                    try:
+                        api_result = huggingface_utils.run_inference_api(
+                            cloud_model_id, 
+                            str(thumb_path), 
+                            model_task, 
+                            token, 
+                            parameters=params
+                        )
+                        # Normalize Result
+                        if model_task == config.MODEL_TASK_ZERO_SHOT and isinstance(api_result, list):
+                            # Convert [{"label": "A", "score": 0.9}, ...] to {'labels': ['A'], 'scores': [0.9]}
+                            labels = [x.get('label') for x in api_result]
+                            scores = [x.get('score') for x in api_result]
+                            result = {'labels': labels, 'scores': scores}
+                        else:
+                            result = api_result
 
-                        except Exception as api_err:
-                            logging.error(f"API Error for {item_id}: {api_err}")
-                            failed_count += 1
-                            continue # Skip this item on API failure
+                    except Exception as api_err:
+                        logging.error(f"API Error for {item_id}: {api_err}")
+                        failed_count += 1
+                        continue # Skip this item on API failure
 
                 else:
                     # Local Inference

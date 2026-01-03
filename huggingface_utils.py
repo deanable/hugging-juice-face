@@ -645,5 +645,5 @@ def run_inference_api(model_id, image_path, task, token, parameters=None):
              return client.post(json={"inputs": image_path}, model=model_id, task=task)
 
     except Exception as e:
-        logging.error(f"API Inference failed: {e}")
+        logging.exception("API Inference failed:")
         raise
