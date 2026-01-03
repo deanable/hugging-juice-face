@@ -439,6 +439,11 @@ def process_images_worker(gui_instance, image_files, categories, keywords, devic
     if (model_task == config.MODEL_TASK_IMAGE_TO_TEXT or "image-to-text" in model_task) and batch_size > 1:
         logging.warning(f"Batch inference for '{model_task}' can be unstable. Forcing Batch Size to 1.")
         batch_size = 1
+        
+    # Force Batch Size 1 for Cloud Mode to ensure granular progress updates
+    if mode == "cloud" and batch_size > 1:
+        logging.info("Cloud Mode active: Forcing Batch Size to 1 for precise progress tracking.")
+        batch_size = 1
 
     total_images = len(valid_paths)
     processed_count = 0

@@ -703,6 +703,8 @@ class ModernImageTaggerGUI(ctk.CTk):
         # Reset UI state
         if self.start_button:
             self.start_button.configure(text="Start Processing", command=self.on_start_processing)
+            self.stop_button.configure(state="disabled", fg_color="red")
+            gui_handlers.toggle_input_state(self, "normal")
         self.stop_event.clear()
         self.processing_start_time = None
         

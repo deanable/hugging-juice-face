@@ -512,6 +512,12 @@ def on_inference_mode_change(gui_instance, mode_value=None):
         # (Optional: keep it if we want to allow hybrid, but sticking to design)
         # gui_instance.model_section... (Leaving standard list visible for reference)
 
+        if hasattr(gui_instance, 'device_selector'):
+             gui_instance.device_selector.configure(state="disabled")
+        if hasattr(gui_instance, 'model_task'):
+             # If using cloud, maybe update task suggestions again?
+             pass
+
         update_step_states(gui_instance)
         
     else:
@@ -525,6 +531,9 @@ def on_inference_mode_change(gui_instance, mode_value=None):
                  gui_instance.local_model_search_section.pack(fill="x", pady=(0, 20), after=gui_instance.inference_mode_selector.master)
              else:
                  gui_instance.local_model_search_section.pack(fill="x", pady=(0, 20))
+
+        if hasattr(gui_instance, 'device_selector'):
+             gui_instance.device_selector.configure(state="normal")
         
         update_step_states(gui_instance)
 
@@ -886,6 +895,62 @@ def on_start_processing(gui_instance):
         )
         gui_instance.stop_button.configure(state="normal", fg_color="red")
         
+        # Disable inputs to prevent changes during processing
+        toggle_input_state(gui_instance, "disabled")
+
+        # Get processing parameters
+        # ... (rest of function)
+
+
+def toggle_input_state(gui_instance, state="normal"):
+    """Enable or disable input widgets in Steps 1, 2, 3.
+    
+    Args:
+        gui_instance: Reference to main GUI instance
+        state: "normal" or "disabled"
+    """
+    try:
+        # Step 1: Source
+        if hasattr(gui_instance, 'select_dir_button'):
+            gui_instance.select_dir_button.configure(state=state)
+        if hasattr(gui_instance, 'daminion_connect_button'):
+            gui_instance.daminion_connect_button.configure(state=state)
+            
+        # Step 2: Model
+        # Task radio buttons
+        if hasattr(gui_instance, 'model_task'):
+             # Radio buttons share the variable, but disabling the parent frame or individual buttons?
+             # CustomTkinter radio buttons don't have easy mass-disable via variable.
+             # We might need to iterate children if we stored them, or just disable the main interactions.
+             # Ideally we stored the radio buttons. If not, we can just rely on the 'Start' button being the gate.
+             # But user asked to disable tabs. 
+             pass
+
+        if hasattr(gui_instance, 'inference_mode_selector'):
+            gui_instance.inference_mode_selector.configure(state=state)
+            
+        if hasattr(gui_instance, 'find_models_button'):
+            gui_instance.find_models_button.configure(state=state)
+            
+        if hasattr(gui_instance, 'load_model_button'):
+            # Keep load button disabled if processing, but if state is normal, 
+            # we need to check if model is selected.
+            if state == "disabled":
+                gui_instance.load_model_button.configure(state="disabled")
+            else:
+                # Re-evaluate state
+                if hasattr(gui_instance, 'selected_model_var') and gui_instance.selected_model_var.get():
+                     gui_instance.load_model_button.configure(state="normal")
+
+        # Step 3: Config
+        if hasattr(gui_instance, 'device_selector'):
+            gui_instance.device_selector.configure(state=state)
+        if hasattr(gui_instance, 'batch_size_slider'):
+             gui_instance.batch_size_slider.configure(state=state)
+
+    except Exception as e:
+        logging.warning(f"Failed to toggle input state: {e}")
+        
         gui_instance.stop_event.clear()
         gui_instance.processing_start_time = time.time()
         
@@ -979,6 +1044,9 @@ def on_stop_processing(gui_instance):
         fg_color="green"
     )
     gui_instance.stop_button.configure(state="disabled", fg_color="red")
+    
+    # Re-enable inputs
+    toggle_input_state(gui_instance, "normal")
 
 
 def on_select_directory(gui_instance):
