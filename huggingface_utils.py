@@ -646,8 +646,9 @@ def run_inference_api(model_id, image_path, task, token, parameters=None):
                      "parameters": {"candidate_labels": parameters["candidate_labels"]}
                  }
                  
-                 # Direct API call to bypass client library issues
-                 api_url = f"https://api-inference.huggingface.co/models/{model_id}"
+                 # Direct API call to bypass client library issues and deprecated endpoints
+                 # Using the new router endpoint
+                 api_url = f"https://router.huggingface.co/hf-inference/models/{model_id}"
                  headers = {"Authorization": f"Bearer {token}"}
                  
                  response = requests.post(api_url, headers=headers, json=payload)
