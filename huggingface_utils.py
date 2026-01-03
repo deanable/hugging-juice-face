@@ -9,6 +9,7 @@ from functools import partial
 from tqdm import tqdm
 from huggingface_hub import list_models, hf_hub_download, snapshot_download, HfApi, InferenceClient
 from huggingface_hub.constants import HUGGINGFACE_HUB_CACHE
+import requests
 from requests.exceptions import HTTPError
 from transformers import pipeline, AutoConfig, AutoTokenizer
 from threading import RLock
@@ -644,8 +645,14 @@ def run_inference_api(model_id, image_path, task, token, parameters=None):
                      "inputs": b64_image,
                      "parameters": {"candidate_labels": parameters["candidate_labels"]}
                  }
-                 # Explicitly passing model and task to post to ensure correct routing
-                 return client.post(json=payload, model=model_id, task=task)
+                 
+                 # Direct API call to bypass client library issues
+                 api_url = f"https://api-inference.huggingface.co/models/{model_id}"
+                 headers = {"Authorization": f"Bearer {token}"}
+                 
+                 response = requests.post(api_url, headers=headers, json=payload)
+                 response.raise_for_status()
+                 return response.json()
 
 
         elif task == config.MODEL_TASK_IMAGE_TO_TEXT:
