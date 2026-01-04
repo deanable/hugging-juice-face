@@ -64,12 +64,14 @@ class TestAPIIntegration(unittest.TestCase):
         )
         self.assertEqual(result, expected_response)
 
-    @patch('huggingface_utils.InferenceClient')
-    def test_image_to_text(self, MockClient):
+    @patch('requests.post')
+    def test_image_to_text(self, mock_post):
         # Setup mock
-        mock_instance = MockClient.return_value
         expected_response = [{"generated_text": "a cat"}]
-        mock_instance.image_to_text.return_value = expected_response
+        mock_response = MagicMock()
+        mock_response.json.return_value = expected_response
+        mock_response.raise_for_status.return_value = None
+        mock_post.return_value = mock_response
         
         # Run
         params = {"generate_kwargs": {"max_new_tokens": 10}}
@@ -82,11 +84,10 @@ class TestAPIIntegration(unittest.TestCase):
         )
         
         # Verify
-        mock_instance.image_to_text.assert_called_with(
-            self.image_path, 
-            model="test/model", 
-            generate_kwargs={"max_new_tokens": 10}
-        )
+        mock_post.assert_called()
+        call_args = mock_post.call_args
+        self.assertIn("https://router.huggingface.co/hf-inference/models/test/model", call_args[0][0])
+        self.assertEqual(call_args[1]['json']['parameters']['max_new_tokens'], 10)
         self.assertEqual(result, expected_response)
 
 if __name__ == '__main__':

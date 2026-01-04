@@ -514,6 +514,10 @@ def on_inference_mode_change(gui_instance, mode_value=None):
 
         if hasattr(gui_instance, 'device_selector'):
              gui_instance.device_selector.configure(state="disabled")
+        
+        if hasattr(gui_instance, 'hw_frame'):
+            gui_instance.hw_frame.pack_forget()
+
         if hasattr(gui_instance, 'model_task'):
              # If using cloud, maybe update task suggestions again?
              pass
@@ -531,6 +535,16 @@ def on_inference_mode_change(gui_instance, mode_value=None):
                  gui_instance.local_model_search_section.pack(fill="x", pady=(0, 20), after=gui_instance.inference_mode_selector.master)
              else:
                  gui_instance.local_model_search_section.pack(fill="x", pady=(0, 20))
+
+        if hasattr(gui_instance, 'hw_frame'):
+            # Repack hardware selection
+            # We want it in the config section.
+            # Ideally we check where it was, but simpler to just pack it at the top of config section?
+            # Actually, we need to know where to pack it relative to others.
+            # In gui_steps, it's packed first in config_section.
+            # But here we don't easily have reference to config_section unless stored.
+            # However, gui_instance.hw_frame.master should be config_section.
+            gui_instance.hw_frame.pack(fill="x", padx=40, pady=(0, 10), before=gui_instance.hw_frame.master.winfo_children()[1] if len(gui_instance.hw_frame.master.winfo_children()) > 1 else None)
 
         if hasattr(gui_instance, 'device_selector'):
              gui_instance.device_selector.configure(state="normal")

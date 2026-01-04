@@ -663,7 +663,32 @@ def run_inference_api(model_id, image_path, task, token, parameters=None):
 
 
         elif task == config.MODEL_TASK_IMAGE_TO_TEXT:
-             return client.image_to_text(image_path, model=model_id, generate_kwargs=parameters.get("generate_kwargs"))
+            try:
+                # The client.image_to_text() convenience method doesn't support all generation parameters
+                # correctly or consistently across versions. We fallback to manual POST.
+                 
+                with open(image_path, "rb") as img_f:
+                    b64_image = base64.b64encode(img_f.read()).decode("utf-8")
+
+                gen_kwargs = parameters.get("generate_kwargs", {}) or {}
+                
+                payload = {
+                     "inputs": b64_image,
+                     "parameters": gen_kwargs
+                }
+
+                # Using the router endpoint
+                api_url = f"https://router.huggingface.co/hf-inference/models/{model_id}"
+                headers = {"Authorization": f"Bearer {token}"}
+
+                response = requests.post(api_url, headers=headers, json=payload)
+                response.raise_for_status()
+                return response.json()
+            
+            except requests.exceptions.HTTPError as e:
+                 if e.response.status_code in [404, 410]:
+                     raise ValueError(f"Model {model_id} is not available on the free Hugging Face Inference API. Status: {e.response.status_code}")
+                 raise e
         
         else:
              # Fallback to generic

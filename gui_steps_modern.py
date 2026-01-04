@@ -604,9 +604,9 @@ def create_step3_config(parent, gui_instance):
     config_label.pack(anchor="w", padx=20, pady=(15, 10))
 
     # Hardware Selection
-    hw_frame = ctk.CTkFrame(config_section, fg_color="transparent")
-    hw_frame.pack(fill="x", padx=40, pady=(0, 10))
-    ctk.CTkLabel(hw_frame, text="Compute Device:", width=120, anchor="w").pack(side="left")
+    gui_instance.hw_frame = ctk.CTkFrame(config_section, fg_color="transparent")
+    gui_instance.hw_frame.pack(fill="x", padx=40, pady=(0, 10))
+    ctk.CTkLabel(gui_instance.hw_frame, text="Compute Device:", width=120, anchor="w").pack(side="left")
     
     # Check available devices using centralized helper
     import huggingface_utils
@@ -619,7 +619,7 @@ def create_step3_config(parent, gui_instance):
 
     gui_instance.device_var = ctk.StringVar(value=default_device)
     gui_instance.device_selector = ctk.CTkSegmentedButton(
-        hw_frame,
+        gui_instance.hw_frame,
         values=devices,
         variable=gui_instance.device_var
     )
@@ -632,7 +632,7 @@ def create_step3_config(parent, gui_instance):
         diag_text = f"Using: {gpu_name}"
     
     gui_instance.device_status_label = ctk.CTkLabel(
-        hw_frame, 
+        gui_instance.hw_frame, 
         text=diag_text, 
         font=ctk.CTkFont(size=10)
     )
@@ -640,7 +640,7 @@ def create_step3_config(parent, gui_instance):
 
     # Open Cache Button
     cache_btn = ctk.CTkButton(
-        hw_frame,
+        gui_instance.hw_frame,
         text="📂 Open Model Cache",
         width=120,
         height=30,
