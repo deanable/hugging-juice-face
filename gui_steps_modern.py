@@ -553,7 +553,7 @@ def create_step3_config(parent, gui_instance):
     ctk.CTkLabel(scope_row1, text="Scope:", width=120).pack(side="left")
     gui_instance.scope_var = ctk.CTkOptionMenu(
         scope_row1,
-        values=["All Items", "Flagged Items", "Untagged Items", "Custom Collection", "Shared Collection"],
+        values=["All Items", "Flagged Items", "Untagged Items", "Shared Collection"],
         width=400
     )
     gui_instance.scope_var.pack(side="left", padx=(10, 0), fill="x", expand=True)

@@ -20,12 +20,14 @@ class TestAPIIntegration(unittest.TestCase):
         if os.path.exists(self.image_path):
             os.remove(self.image_path)
 
-    @patch('huggingface_utils.InferenceClient')
-    def test_image_classification(self, MockClient):
+    @patch('requests.post')
+    def test_image_classification(self, mock_post):
         # Setup mock
-        mock_instance = MockClient.return_value
         expected_response = [{"label": "cat", "score": 0.9}]
-        mock_instance.image_classification.return_value = expected_response
+        mock_response = MagicMock()
+        mock_response.json.return_value = expected_response
+        mock_response.raise_for_status.return_value = None
+        mock_post.return_value = mock_response
         
         # Run
         result = huggingface_utils.run_inference_api(
@@ -36,7 +38,9 @@ class TestAPIIntegration(unittest.TestCase):
         )
         
         # Verify
-        mock_instance.image_classification.assert_called_with(self.image_path, model="test/model")
+        mock_post.assert_called()
+        call_args = mock_post.call_args
+        self.assertIn("https://router.huggingface.co/hf-inference/models/test/model", call_args[0][0])
         self.assertEqual(result, expected_response)
 
     @patch('huggingface_utils.InferenceClient')

@@ -390,7 +390,9 @@ def process_daminion_worker(gui_instance, categories, keywords, items=None, devi
                     completed_count += 1
                 else:
                     logging.info(f"[GUI] - Item {item_id}: No tags extracted above threshold.")
-                gui_instance.q.put({'type': 'progress', 'current': completed_count, 'total': len(items)})
+                
+                progress_pct = completed_count / len(items) if items else 0.0
+                gui_instance.q.put({'type': 'progress', 'current': completed_count, 'total': len(items), 'progress': progress_pct})
 
             except Exception as e:
                 failed_count += 1
@@ -594,11 +596,12 @@ def process_images_worker(gui_instance, image_files, categories, keywords, devic
                         
                     processed_count += 1
                     
-                except Exception as write_err:
+                    except Exception as write_err:
                     error_count += 1
                     logging.error(f"Error writing metadata for {path}: {write_err}")
 
-            gui_instance.q.put({'type': 'progress', 'current': processed_count, 'total': total_images})
+            progress_pct = processed_count / total_images if total_images else 0.0
+            gui_instance.q.put({'type': 'progress', 'current': processed_count, 'total': total_images, 'progress': progress_pct})
 
         except Exception as e:
             logging.exception(f"Batch inference failed: {e}")

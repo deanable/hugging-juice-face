@@ -399,32 +399,33 @@ def on_model_task_change(gui_instance, event=None):
         task = config.DISPLAY_TASK_MAP.get(display_task, "")
         logging.info(f"Model task changed to: {task} (Display: {display_task})")
 
-        # Update Dynamic Cloud Model Suggestions
+        # Update Dynamic Cloud Model Suggestions and Selection
         if hasattr(gui_instance, 'cloud_model_entry'):
-            suggestions = {
-                config.MODEL_TASK_IMAGE_CLASSIFICATION: [
-                    "google/vit-base-patch16-224",
-                    "microsoft/resnet-50", 
-                    "facebook/deit-base-distilled-patch16-224"
-                ],
-                config.MODEL_TASK_IMAGE_TO_TEXT: [
-                    "nlpconnect/vit-gpt2-image-captioning",
-                    "Salesforce/blip-image-captioning-base",
-                    "microsoft/git-base"
-                ],
-                config.MODEL_TASK_ZERO_SHOT: [
-                     "openai/clip-vit-base-patch32",
-                     "openai/clip-vit-large-patch14"
-                ]
+            # Enforce single best model per task for simplicity as requested
+            default_models = {
+                config.MODEL_TASK_IMAGE_CLASSIFICATION: "google/vit-base-patch16-224",
+                config.MODEL_TASK_IMAGE_TO_TEXT: "nlpconnect/vit-gpt2-image-captioning",
+                config.MODEL_TASK_ZERO_SHOT: "openai/clip-vit-base-patch32"
             }
-            new_values = suggestions.get(task, ["google/vit-base-patch16-224"])
-            gui_instance.cloud_model_entry.configure(values=new_values)
             
-            # Reset to first default if current is not valid/custom
-            current_val = gui_instance.cloud_model_entry.get()
-            # If current value is empty or one of the defaults from *another* task, switch it.
-            # Simple heuristic: always switch to default of new task to guide user
-            gui_instance.cloud_model_entry.set(new_values[0])
+            target_model = default_models.get(task, "google/vit-base-patch16-224")
+            
+            # Set the value
+            gui_instance.cloud_model_entry.set(target_model)
+            
+            # If in Cloud mode, disable the input to prevent user error
+            # We need to check if we are in cloud mode currently.
+            # But changing task doesn't change mode.
+            # However, we want to ensure it's disabled if cloud mode IS active or becomes active.
+            # The on_inference_mode_change handler handles the enabling/disabling generally,
+            # but we should enforce "disabled" state here if currently in Cloud mode to reflect the "best model only" policy.
+            
+            mode = gui_instance.inference_mode_var.get() if hasattr(gui_instance, 'inference_mode_var') else "local"
+            if mode == "Cloud (HF API)":
+                 gui_instance.cloud_model_entry.configure(state="disabled")
+            else:
+                 # In local mode, this entry isn't visible usually, but keep it enabled just in case
+                 gui_instance.cloud_model_entry.configure(state="normal")
 
         # If we have models already loaded, filter them by the new task
         if hasattr(gui_instance, 'all_models') and gui_instance.all_models:
@@ -518,9 +519,12 @@ def on_inference_mode_change(gui_instance, mode_value=None):
         if hasattr(gui_instance, 'hw_frame'):
             gui_instance.hw_frame.pack_forget()
 
+        if hasattr(gui_instance, 'cloud_model_entry'):
+             gui_instance.cloud_model_entry.configure(state="disabled")
+
         if hasattr(gui_instance, 'model_task'):
-             # If using cloud, maybe update task suggestions again?
-             pass
+             # Trigger task change to ensure correct default model is set for current task
+             on_model_task_change(gui_instance)
 
         update_step_states(gui_instance)
         

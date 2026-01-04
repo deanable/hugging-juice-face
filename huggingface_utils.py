@@ -621,7 +621,25 @@ def run_inference_api(model_id, image_path, task, token, parameters=None):
         logging.info(f"calling API for {task} on {model_id}...")
         
         if task == config.MODEL_TASK_IMAGE_CLASSIFICATION:
-             return client.image_classification(image_path, model=model_id)
+             try:
+                # Fallback to manual POST to avoid StopIteration issues in some client versions
+                with open(image_path, "rb") as img_f:
+                    b64_image = base64.b64encode(img_f.read()).decode("utf-8")
+                
+                payload = {"inputs": b64_image}
+
+                # Using the router endpoint
+                api_url = f"https://router.huggingface.co/hf-inference/models/{model_id}"
+                headers = {"Authorization": f"Bearer {token}"}
+
+                response = requests.post(api_url, headers=headers, json=payload)
+                response.raise_for_status()
+                return response.json()
+
+             except requests.exceptions.HTTPError as e:
+                 if e.response.status_code in [404, 410]:
+                     raise ValueError(f"Model {model_id} is not available on the free Hugging Face Inference API. Status: {e.response.status_code}")
+                 raise e
              
         elif task == config.MODEL_TASK_ZERO_SHOT:
              # Zero shot requires candidate labels in parameters
