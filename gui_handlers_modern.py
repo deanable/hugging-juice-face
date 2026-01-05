@@ -196,7 +196,7 @@ def update_step_states(gui_instance):
     # Model/API Ready?
     is_cloud = hasattr(gui_instance, 'inference_mode_var') and gui_instance.inference_mode_var.get() == "Cloud (HF API)"
     if is_cloud:
-        model_ready = bool(gui_instance.api_token_entry.get() and gui_instance.cloud_model_entry.get())
+        model_ready = bool(gui_instance.api_token_entry.get())
     else:
         model_ready = bool(gui_instance.model)
 
@@ -567,18 +567,27 @@ def on_test_api_connection(gui_instance):
     """Validates the HF Token and Model ID for API access.
     """
     token = gui_instance.api_token_entry.get().strip()
-    model_id = gui_instance.cloud_model_entry.get().strip()
     
+    # Auto-select model based on task (User request: best free model)
+    display_task = gui_instance.model_task.get()
+    task_map_inv = {v: k for k, v in config.TASK_DISPLAY_MAP.items()}
+    model_task = task_map_inv.get(display_task, config.MODEL_TASK_IMAGE_CLASSIFICATION)
+    
+    if model_task == config.MODEL_TASK_IMAGE_CLASSIFICATION:
+        model_id = "google/vit-base-patch16-224"
+    elif model_task == config.MODEL_TASK_ZERO_SHOT:
+        model_id = "openai/clip-vit-base-patch32"
+    else:
+        model_id = "Salesforce/blip-image-captioning-base"
+
+    logging.info(f"Auto-selected cloud model: {model_id} for task: {model_task}")
+
     if not token:
         show_modern_messagebox(gui_instance, "Missing Token", "Please enter a Hugging Face API Token.", "warning")
         return
-
-    if not model_id:
-        show_modern_messagebox(gui_instance, "Missing Model ID", "Please enter a Model ID.", "warning")
-        return
         
     gui_instance.test_api_button.configure(state="disabled", text="Testing...")
-    gui_instance.api_status_label.configure(text="Connecting...", text_color="blue")
+    gui_instance.api_status_label.configure(text=f"Connecting to {model_id}...", text_color="blue")
     
     # We can do this in a quick inline thread or worker
     def _test():
@@ -942,7 +951,20 @@ def on_start_processing(gui_instance):
         if hasattr(gui_instance, 'inference_mode_var') and gui_instance.inference_mode_var.get() == "Cloud (HF API)":
              inference_mode = "cloud"
              token = gui_instance.api_token_entry.get().strip()
-             cloud_model_id = gui_instance.cloud_model_entry.get().strip()
+             
+             # Auto-select model based on task
+             display_task = gui_instance.model_task.get()
+             task_map_inv = {v: k for k, v in config.TASK_DISPLAY_MAP.items()}
+             model_task = task_map_inv.get(display_task, config.MODEL_TASK_IMAGE_CLASSIFICATION)
+            
+             if model_task == config.MODEL_TASK_IMAGE_CLASSIFICATION:
+                 cloud_model_id = "google/vit-base-patch16-224"
+             elif model_task == config.MODEL_TASK_ZERO_SHOT:
+                 cloud_model_id = "openai/clip-vit-base-patch32"
+             else:
+                 cloud_model_id = "Salesforce/blip-image-captioning-base"
+                 
+             logging.info(f"Auto-selected cloud model: {cloud_model_id}")
 
         # Processing logic...
         gui_instance.stop_event.clear()
@@ -1050,10 +1072,23 @@ def toggle_input_state(gui_instance, state="normal"):
         
         if mode_key == "cloud":
             token = gui_instance.api_token_entry.get().strip()
-            cloud_model_id = gui_instance.cloud_model_entry.get().strip()
             
-            if not token or not cloud_model_id:
-                show_modern_messagebox(gui_instance, "Missing Credentials", "Please enter HF Token and Model ID for Cloud mode.", "error")
+            # Auto-select model based on task
+            display_task = gui_instance.model_task.get()
+            task_map_inv = {v: k for k, v in config.TASK_DISPLAY_MAP.items()}
+            model_task = task_map_inv.get(display_task, config.MODEL_TASK_IMAGE_CLASSIFICATION)
+            
+            if model_task == config.MODEL_TASK_IMAGE_CLASSIFICATION:
+                cloud_model_id = "google/vit-base-patch16-224"
+            elif model_task == config.MODEL_TASK_ZERO_SHOT:
+                cloud_model_id = "openai/clip-vit-base-patch32"
+            else:
+                cloud_model_id = "Salesforce/blip-image-captioning-base"
+                
+            logging.info(f"Auto-selected cloud model: {cloud_model_id}")
+
+            if not token:
+                show_modern_messagebox(gui_instance, "Missing Credentials", "Please enter HF Token for Cloud mode.", "error")
                 gui_instance.start_button.configure(text="🚀 Start Processing", state="normal", fg_color="green")
                 gui_instance.stop_button.configure(state="disabled", fg_color="red")
                 return
@@ -1070,6 +1105,9 @@ def toggle_input_state(gui_instance, state="normal"):
             
             # Extract scope and collection ID
             scope = gui_instance.scope_var.get()
+            if not scope:
+                scope = "All Items"
+                logging.warning("Scope not found, defaulting to 'All Items'")
             collection_id = None
             collection_name = None
             

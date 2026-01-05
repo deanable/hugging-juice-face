@@ -571,6 +571,21 @@ class DaminionClient:
                         self._tag_map[p_name] = str(p_guid)
                         # Also store lowercase version for robust lookup
                         self._tag_map[p_name.lower()] = str(p_guid)
+                        
+                        # DEBUG: Check if we have an integer ID in the fields
+                        if p_name == "Collections" or p_name == "Flag":
+                             logging.info(f"[DAMINION] DEBUG Schema Object for '{p_name}': {obj.keys()}")
+                             if 'id' in obj:
+                                 logging.info(f"[DAMINION] DEBUG ID for '{p_name}': {obj['id']} (Type: {type(obj['id'])})")
+                             # Try to populate int ID from here if possible?
+                             # Usually GetDefaultLayout returns 'id' as 'PropertyID' (int)?
+                             # Or 'propertyID'?
+                             
+                             potential_id = obj.get('id') or obj.get('propertyID') or obj.get('PropertyID')
+                             if potential_id and isinstance(potential_id, int):
+                                 self._tag_id_map[p_name] = potential_id
+                                 self._tag_id_map[p_name.lower()] = potential_id
+                                 logging.info(f"[DAMINION] Found Integer ID {potential_id} for '{p_name}' in Layout.")
 
                     # Recurse into children
                     for key, value in obj.items():
@@ -592,10 +607,8 @@ class DaminionClient:
             
             # Additional step: Fetch Integer IDs for endpoints like IndexedTagValues
             try:
-                # Based on C# SDK, GetTags returns list of tags with IDs
-                # Endpoint: /api/Tag/GetTags (returns DaminionGetTagsResponse with 'tags' list?)
-                # Or simply returns list of TagInfo
-                endpoint_tags = "/api/Tag/GetTags"
+                # Based on C# SDK, GetTags endpoint is api/settings/getTags
+                endpoint_tags = "/api/settings/getTags"
                 response_tags = self._make_request(endpoint_tags)
                 
                 tags_list = []
@@ -607,16 +620,16 @@ class DaminionClient:
                 count_ids = 0
                 for tag in tags_list:
                     if isinstance(tag, dict):
-                         t_name = tag.get('name') or tag.get('tagName')
+                         t_name = tag.get('name') or tag.get('tagName') or tag.get('Title')
                          t_id = tag.get('id') # Integer ID
                          if t_name and t_id is not None:
                              self._tag_id_map[t_name] = t_id
                              self._tag_id_map[t_name.lower()] = t_id
                              count_ids += 1
                 
-                logging.info(f"[DAMINION] Mapped {count_ids} tags to Integer IDs.")
+                logging.info(f"[DAMINION] Mapped {count_ids} tags to Integer IDs from /api/settings/getTags.")
             except Exception as e:
-                logging.warning(f"[DAMINION] Failed to fetch tag integer IDs via /api/Tag/GetTags: {e}")
+                logging.warning(f"[DAMINION] Failed to fetch tag integer IDs via /api/settings/getTags: {e}")
 
             return self._tag_map
             

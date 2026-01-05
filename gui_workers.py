@@ -216,7 +216,6 @@ def process_daminion_worker(gui_instance, categories, keywords, items=None, devi
                  try:
                      if scope == "Collection":
                          # Fetch items by Tag Value
-                         # We assume collection_id is the Value ID
                          items = gui_instance.daminion_client.get_items_by_tag("Collection", collection_id, value_name=collection_name)
                          if not items:
                               # Fallback to Collections plural
@@ -226,22 +225,43 @@ def process_daminion_worker(gui_instance, categories, keywords, items=None, devi
                          items = gui_instance.daminion_client.get_shared_collection_items(collection_id)
                          
                      logging.info(f"[GUI] Retrieved {len(items)} items from {scope} {collection_id}")
+                     if items:
+                         logging.info(f"[GUI] Items: {[i.get('fileName') or i.get('id') for i in items[:50]]} ... total {len(items)}")
+
                  except Exception as e:
                      logging.error(f"Failed to fetch collection items: {e}")
                      gui_instance.q.put({'type': 'error', 'error': f"Failed to fetch collection items: {e}"})
                      return
             elif scope == "Collection":
-                 # Scope is Collection but no ID provided?
                  logging.warning("Scope is Collection but no collection_id provided. Aborting to avoid full scan.")
                  gui_instance.q.put({'type': 'error', 'error': "No collection selected. Please select a collection."})
                  return
+            elif scope == "Flagged Items":
+                 gui_instance.q.put({'type': 'status_update', 'status': "Fetching flagged items..."})
+                 try:
+                     # Set a reasonable limit or get all? Default 200 in client, maybe increase?
+                     items = gui_instance.daminion_client.get_flagged_items(max_items=1000)
+                     logging.info(f"[GUI] Retrieved {len(items)} flagged items.")
+                     if items:
+                         logging.info(f"[GUI] Flagged Items: {[i.get('fileName') or i.get('id') for i in items[:50]]}")
+                 except Exception as e:
+                     gui_instance.q.put({'type': 'error', 'error': f"Failed to fetch flagged items: {e}"})
+                     return
+            elif scope == "Untagged Items":
+                 gui_instance.q.put({'type': 'status_update', 'status': "Fetching untagged items..."})
+                 try:
+                     items, total = gui_instance.daminion_client.get_untagged_items()
+                     logging.info(f"[GUI] Retrieved {len(items)} untagged items.")
+                 except Exception as e:
+                     gui_instance.q.put({'type': 'error', 'error': f"Failed to fetch untagged items: {e}"})
+                     return
             else:
+                # All Items / Full Scan
                 gui_instance.q.put({'type': 'status_update', 'status': "Connecting to Daminion..."})
                 
                 def progress_cb(current, total):
                     msg = f"Fetching items from Daminion... ({current}/{total})"
                     gui_instance.q.put({'type': 'status_update', 'status': msg})
-                    # Update progress bar
                     if total > 0:
                          gui_instance.q.put({'type': 'progress_max', 'total': total})
                     gui_instance.q.put({'type': 'progress', 'current': current, 'total': total})
@@ -334,6 +354,18 @@ def process_daminion_worker(gui_instance, categories, keywords, items=None, devi
                             result = {'labels': labels, 'scores': scores}
                         else:
                             result = api_result
+
+                    except ValueError as ve:
+                        # Check for fatal errors (e.g. Model 404) to abort processing
+                        msg = str(ve)
+                        if "404" in msg and "not available" in msg:
+                            logging.error(f"[GUI] FATAL API ERROR: {msg}. Aborting job.")
+                            gui_instance.q.put({'type': 'error', 'error': f"FATAL ERROR: {msg}\n\nPlease check your Model ID."})
+                            return # Stop worker immediately
+                        
+                        logging.error(f"API Error for {item_id}: {ve}")
+                        failed_count += 1
+                        continue
 
                     except Exception as api_err:
                         logging.error(f"API Error for {item_id}: {api_err}")

@@ -311,23 +311,14 @@ def create_step2_model(parent, gui_instance):
     if saved_token:
         gui_instance.api_token_entry.insert(0, saved_token)
 
-    # Model ID Input
-    model_id_frame = ctk.CTkFrame(gui_instance.cloud_config_frame, fg_color="transparent")
-    model_id_frame.pack(fill="x", padx=40, pady=(0, 15))
-    
-    ctk.CTkLabel(model_id_frame, text="Model ID:", width=120, anchor="w").pack(side="left")
-    gui_instance.cloud_model_entry = ctk.CTkComboBox(
-        model_id_frame,
-        values=[
-            "google/siglip-base-patch16-224", 
-            "microsoft/resnet-50", 
-            "nlpconnect/vit-gpt2-image-captioning",
-            "openai/clip-vit-large-patch14"
-        ],
-        width=300
-    )
-    gui_instance.cloud_model_entry.pack(side="left", padx=(10, 0), fill="x", expand=True)
-    gui_instance.cloud_model_entry.set("google/siglip-base-patch16-224")
+    # Model ID Input - REMOVED per user request (Auto-selected based on task)
+    # gui_instance.cloud_model_entry is no longer used for input.
+    # Logic in handlers will determine the best free model.
+    # Keeping the variable wrapper if needed by handlers to avoid AttributeErrors, or refactoring handlers.
+    # Ideally, we remove the UI element.
+    # Initializing a dummy for compatibility if handlers aren't fully refactored yet, 
+    # but I will refactor handlers in the next step.
+    pass
 
     # Test Connection Button
     test_btn_frame = ctk.CTkFrame(gui_instance.cloud_config_frame, fg_color="transparent")
