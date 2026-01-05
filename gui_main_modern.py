@@ -447,7 +447,8 @@ class ModernImageTaggerGUI(ctk.CTk):
         if success:
             if self.api_status_label:
                 self.api_status_label.configure(text="✅ Connection Valid", text_color="green")
-            gui_handlers.show_modern_messagebox(self, "Success", f"API Connection Successful!\n\n{msg}", "success")
+            # User requested no dialog on success
+            # gui_handlers.show_modern_messagebox(self, "Success", f"API Connection Successful!\n\n{msg}", "success")
         else:
             if self.api_status_label:
                 self.api_status_label.configure(text="❌ Connection Failed", text_color="red")
@@ -627,7 +628,8 @@ class ModernImageTaggerGUI(ctk.CTk):
             names = []
             for c in collections:
                 if isinstance(c, dict):
-                    title = c.get('name') or c.get('title') or c.get('code') or str(c.get('id') or '')
+                    # Check for 'Value' (from IndexedTagValues) or standard keys
+                    title = c.get('name') or c.get('title') or c.get('Value') or c.get('value') or c.get('code') or str(c.get('id') or '')
                     idx = c.get('id') or c.get('code') or c.get('collectionId') or ''
                     names.append(f"{title} ({idx})" if idx else title)
             

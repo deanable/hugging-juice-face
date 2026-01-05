@@ -165,7 +165,7 @@ def find_local_models_worker(gui_instance):
         gui_instance.q.put({'type': 'error', 'error': f"Failed to scan local model cache: {e}"})
 
 
-def process_daminion_worker(gui_instance, categories, keywords, items=None, device=-1, batch_size=8, truncation=True, threshold=0.0, collection_id=None, mode="local", token=None, cloud_model_id=None):
+def process_daminion_worker(gui_instance, categories, keywords, items=None, device=-1, batch_size=8, truncation=True, threshold=0.0, collection_id=None, mode="local", token=None, cloud_model_id=None, scope=None, collection_name=None):
     """Worker thread for processing Daminion items.
 
     Args:
@@ -177,13 +177,15 @@ def process_daminion_worker(gui_instance, categories, keywords, items=None, devi
         batch_size: Batch size (unused for now as we process one by one due to API latency)
         truncation: Whether to truncate inputs
         threshold: Confidence threshold
-        collection_id: ID of shared collection to process (optional)
+        collection_id: ID of shared collection OR Tag Value ID to process (optional)
         mode: "local" or "cloud"
         token: HF API Token (if mode="cloud")
         cloud_model_id: Model ID for API (if mode="cloud")
+        scope: Scope of processing (e.g. "Shared Collection", "Collection")
+        collection_name: Name of the collection (for search fallback)
     """
     logging.info(f"[GUI] ========== DAMINION PROCESSING WORKER STARTED ({mode.upper()}) ==========")
-    logging.info(f"[GUI] Params: Batch={batch_size}, Trunc={truncation}, Thr={threshold}, Collection ID={collection_id}")
+    logging.info(f"[GUI] Params: Batch={batch_size}, Trunc={truncation}, Thr={threshold}, Collection ID={collection_id}, Scope={scope}, Name={collection_name}")
     
     # ... (rest of Daminion logic remains mostly same, but we should use the new threshold)
     # For now, keeping the existing Daminion logic structure but updating signatures.
@@ -207,16 +209,32 @@ def process_daminion_worker(gui_instance, categories, keywords, items=None, devi
 
     try:
         # Fetch items logic...
+        # Fetch items logic...
         if items is None:
             if collection_id:
-                 gui_instance.q.put({'type': 'status_update', 'status': f"Fetching items from shared collection {collection_id}..."})
+                 gui_instance.q.put({'type': 'status_update', 'status': f"Fetching items from {scope} {collection_id}..."})
                  try:
-                     items = gui_instance.daminion_client.get_shared_collection_items(collection_id)
-                     logging.info(f"[GUI] Retrieved {len(items)} items from collection {collection_id}")
+                     if scope == "Collection":
+                         # Fetch items by Tag Value
+                         # We assume collection_id is the Value ID
+                         items = gui_instance.daminion_client.get_items_by_tag("Collection", collection_id, value_name=collection_name)
+                         if not items:
+                              # Fallback to Collections plural
+                              items = gui_instance.daminion_client.get_items_by_tag("Collections", collection_id, value_name=collection_name)
+                     else:
+                         # Default: Shared Collection
+                         items = gui_instance.daminion_client.get_shared_collection_items(collection_id)
+                         
+                     logging.info(f"[GUI] Retrieved {len(items)} items from {scope} {collection_id}")
                  except Exception as e:
                      logging.error(f"Failed to fetch collection items: {e}")
                      gui_instance.q.put({'type': 'error', 'error': f"Failed to fetch collection items: {e}"})
                      return
+            elif scope == "Collection":
+                 # Scope is Collection but no ID provided?
+                 logging.warning("Scope is Collection but no collection_id provided. Aborting to avoid full scan.")
+                 gui_instance.q.put({'type': 'error', 'error': "No collection selected. Please select a collection."})
+                 return
             else:
                 gui_instance.q.put({'type': 'status_update', 'status': "Connecting to Daminion..."})
                 
@@ -618,7 +636,7 @@ def process_images_worker(gui_instance, image_files, categories, keywords, devic
 
 
 def refresh_daminion_collections_worker(gui_instance):
-    """Worker thread to refresh shared collections.
+    """Worker thread to refresh collections based on selected scope.
 
     Args:
         gui_instance: Reference to main GUI instance
@@ -627,17 +645,30 @@ def refresh_daminion_collections_worker(gui_instance):
         if not gui_instance.daminion_client:
             gui_instance.q.put({'type': 'error', 'error': "Daminion client not initialized"})
             return
+            
+        scope = gui_instance.scope_var.get()
+        logging.info(f"Refreshing with scope: {scope}")
+        
+        collections = []
+        if scope == "Collection":
+             # Fetch values for "Collections" tag
+             logging.info("Fetching standard collections (tag values)...")
+             collections = gui_instance.daminion_client.get_tag_values("Collections")
+             # Try singular if empty
+             if not collections:
+                 logging.info("Trying singular 'Collection'...")
+                 collections = gui_instance.daminion_client.get_tag_values("Collection")
+                 
+        else:
+             # Default to Shared Collections
+             logging.info("Fetching shared collections...")
+             collections = gui_instance.daminion_client.get_shared_collections(index=0, page_size=200)
 
-        collections = gui_instance.daminion_client.get_shared_collections(index=0, page_size=200)
         gui_instance.q.put({'type': 'daminion_collections', 'collections': collections})
-        gui_instance.q.put({'type': 'status_update', 'status': f"Found {len(collections)} shared collections on server."})
+        gui_instance.q.put({'type': 'status_update', 'status': f"Found {len(collections)} collections."})
+        
     except Exception as e:
         logging.exception("Failed to refresh collections")
         gui_instance.q.put({'type': 'error', 'error': f"Failed to fetch collections: {e}"})
     finally:
-         # Always re-enable button (hacky since we don't have a direct 'worker_done' signal for this specific task)
-         # We can send a custom status that the handler listens for or just rely on the collection update to re-enable?
-         # The handler `_on_daminion_collections` re-enables the button.
-         # But if it fails, we need to ensure it's re-enabled.
-         # Let's add a robust 'refresh_done' message.
          gui_instance.q.put({'type': 'status_update', 'status': "Collection refresh complete."})

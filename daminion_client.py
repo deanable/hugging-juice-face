@@ -63,6 +63,7 @@ class DaminionClient:
         self._search_endpoint_unavailable = False
         self._structured_query_unavailable = False
         self._tag_map = {}  # Cache for Tag Name -> GUID mapping
+        self._tag_id_map = {} # Cache for Tag Name -> Integer ID mapping (for indexedTagValues)
 
         DaminionClient._instances.add(self)
         atexit.register(self.cleanup_temp_files)
@@ -356,20 +357,28 @@ class DaminionClient:
         """
         endpoint = f"/api/SharedCollection/GetCollections?index={index}&pageSize={page_size}"
         try:
+            logging.info(f"[DEBUG] Fetching shared collections from {endpoint}")
             response = self._make_request(endpoint)
             # response shape may vary; handle both dict and list responses
+            logging.info(f"[DEBUG] Raw response type: {type(response)}")
+            logging.debug(f"[DEBUG] Raw response: {response}")
+
             if isinstance(response, list):
                 # response is already a list
+                logging.info(f"[DEBUG] Response is list with {len(response)} items")
                 return response
             elif isinstance(response, dict):
                 # response is a dict, try common keys
                 collections = response.get('collections') or response.get('items') or response.get('data')
+                logging.info(f"[DEBUG] Extracted 'collections': {type(collections)} (Keys found: {[k for k in response.keys()]})")
+                
                 if isinstance(collections, dict):
                     # sometimes API wraps in data/results
                     return list(collections.values())
                 return collections if isinstance(collections, list) else []
             else:
                 # unexpected response type
+                logging.warning(f"[DEBUG] Unexpected response type: {type(response)}")
                 return []
         except Exception as e:
             logging.exception("Failed to fetch shared collections")
@@ -474,40 +483,67 @@ class DaminionClient:
             raise
 
 
-    def get_flagged_items(self, batch_size: int = 200, max_items: Optional[int] = None) -> List[Dict]:
-        """Return items that appear to be flagged or rejected.
-
-        This is implemented client-side using heuristics (filename / metadata checks)
-        because not all Daminion servers provide a dedicated 'flagged' endpoint.
+    def get_flagged_items(self, batch_size=50, max_items=200) -> List[Dict]:
         """
-        # Try structured query first (based on user feedback for older servers)
-        # query=42,2,3 means property 42 (Flag) has a value of 2 (Flagged) OR 3 (Rejected)
-        flagged_items = self.get_items_by_query(query="42,2,3", operators="42,any", page_size=max_items or 500)
-        if flagged_items is not None:
-            return flagged_items
+        Retrieve media items flagged as 'Flagged'.
+        Returns:
+            List of media item dicts
+        """
+        # Strategy: Find "Flag" tag ID and "Flagged" value ID dynamically
+        flag_tag_name = "Flag"
+        flag_value_name = "Flagged" # Could also be "Rejected" if user prefers
+        
+        # Ensure schema logic ran (populates _tag_id_map)
+        if not self._tag_id_map:
+             self.get_tag_schema()
 
-        # Try text-based search next
-        flagged_items = self.search_items(query="flag:rejected OR flag:approved", page_size=max_items or 500)
-        if flagged_items is not None:
-            return flagged_items
+        flag_tag_id = self._tag_id_map.get(flag_tag_name) or self._tag_id_map.get(flag_tag_name.lower())
+        
+        if flag_tag_id:
+             logging.info(f"[DAMINION] Found 'Flag' tag ID: {flag_tag_id}. Fetching values...")
+             try:
+                 # Use verified endpoint: api/indexedTagValues/getIndexedTagValues
+                 endpoint_vals = f"/api/indexedTagValues/getIndexedTagValues?indexedTagId={flag_tag_id}&pageIndex=0&pageSize=100"
+                 vals = self._make_request(endpoint_vals)
+                 
+                 items_list = []
+                 if isinstance(vals, dict):
+                     items_list = vals.get('values') or vals.get('items') or []
+                     
+                 flagged_value_id = None
+                 for v in items_list:
+                     v_name = v.get('value') or v.get('name') or v.get('title')
+                     if v_name and v_name.lower() == flag_value_name.lower():
+                         flagged_value_id = v.get('id') or v.get('valueId')
+                         break
+                 
+                 if flagged_value_id:
+                      logging.info(f"[DAMINION] Found 'Flagged' value ID: {flagged_value_id}. Querying items...")
+                      # Query: {TagID},{ValueID} using get_items_by_query
+                      # Operators: {TagID},any
+                      query_str = f"{flag_tag_id},{flagged_value_id}"
+                      op_str = f"{flag_tag_id},any"
+                      
+                      items = self.get_items_by_query(query_str, op_str, page_size=max_items or 500)
+                      if items is not None:
+                           return items
+                      
+             except Exception as e:
+                 logging.warning(f"[DAMINION] Failed to fetch Flag values: {e}")
 
-        # Fallback to client-side filtering
-        logging.warning("[DAMINION] Falling back to client-side filtering for flagged items.")
-        items = self.get_all_items_paginated(batch_size=batch_size, max_items=max_items)
+        # Fallback: Text searches
+        logging.info("[DAMINION] Trying text search 'Flag:Flagged'...")
+        items = self.search_items(query="Flag:Flagged", page_size=max_items or 500)
+        if items: 
+            return items
 
-        def is_flagged_item(it: Dict) -> bool:
-            fname = (it.get('fileName') or '').lower()
-            if any(tok in fname for tok in ['flag', 'reject', 'rejected']):
-                return True
-            for k in ('status', 'tags', 'keywords', 'description'):
-                v = it.get(k)
-                if isinstance(v, str) and any(tok in v.lower() for tok in ['flag', 'reject', 'rejected']):
-                    return True
-                if isinstance(v, list) and any(isinstance(x, str) and any(tok in x.lower() for tok in ['flag', 'reject', 'rejected']) for x in v):
-                    return True
-            return False
-
-        return [it for it in items if is_flagged_item(it)]
+        logging.warning("[DAMINION] Falling back to 'status:flagged' text search.")
+        items = self.search_items(query="status:flagged", page_size=max_items or 500)
+        if items:
+             return items
+             
+        logging.warning("[DAMINION] Could not find flagged items via search. Aborting to avoid full catalog scan.")
+        return []
 
     def get_tag_schema(self) -> Dict[str, str]:
         """
@@ -549,13 +585,144 @@ class DaminionClient:
 
             extract_properties(response)
             
+            extract_properties(response)
+            
             logging.info(f"[DAMINION] [OK] Mapped {len(self._tag_map) // 2} tags to GUIDs.")
-            logging.debug(f"[DAMINION] Tag Map: {list(self._tag_map.keys())}")
+            logging.info(f"[DAMINION] Available Tags: {list(self._tag_map.keys())}")
+            
+            # Additional step: Fetch Integer IDs for endpoints like IndexedTagValues
+            try:
+                # Based on C# SDK, GetTags returns list of tags with IDs
+                # Endpoint: /api/Tag/GetTags (returns DaminionGetTagsResponse with 'tags' list?)
+                # Or simply returns list of TagInfo
+                endpoint_tags = "/api/Tag/GetTags"
+                response_tags = self._make_request(endpoint_tags)
+                
+                tags_list = []
+                if isinstance(response_tags, list):
+                    tags_list = response_tags
+                elif isinstance(response_tags, dict):
+                    tags_list = response_tags.get('tags') or response_tags.get('data') or []
+                
+                count_ids = 0
+                for tag in tags_list:
+                    if isinstance(tag, dict):
+                         t_name = tag.get('name') or tag.get('tagName')
+                         t_id = tag.get('id') # Integer ID
+                         if t_name and t_id is not None:
+                             self._tag_id_map[t_name] = t_id
+                             self._tag_id_map[t_name.lower()] = t_id
+                             count_ids += 1
+                
+                logging.info(f"[DAMINION] Mapped {count_ids} tags to Integer IDs.")
+            except Exception as e:
+                logging.warning(f"[DAMINION] Failed to fetch tag integer IDs via /api/Tag/GetTags: {e}")
+
             return self._tag_map
             
         except Exception as e:
             logging.warning(f"[DAMINION] Failed to fetch tag schema: {e}. Tag updates using names might fail.")
             return {}
+
+    def get_tag_values(self, tag_name: str) -> List[Dict]:
+        """
+        Retrieve values for a specific tag (e.g. 'Collection', 'Place').
+        Tries multiple endpoints to ensure compatibility with different Daminion versions.
+        """
+        if not self._tag_map:
+            self.get_tag_schema()
+            
+        guid = self._tag_map.get(tag_name) or self._tag_map.get(tag_name.lower()) or self._tag_map.get(tag_name.title()) 
+        # Fallback for "Collection" / "Collections" pluralization
+        if not guid and tag_name == "Collection":
+             guid = self._tag_map.get("Collections")
+        
+        if not guid:
+            logging.warning(f"Tag '{tag_name}' not found in schema.")
+            return []
+
+        # Try to look up Integer ID first (preferred for IndexedTagValues)
+        int_id = self._tag_id_map.get(tag_name) or self._tag_id_map.get(tag_name.lower()) or self._tag_id_map.get(tag_name.title()) 
+        if int_id is None and tag_name == "Collection":
+             int_id = self._tag_id_map.get("Collections")
+
+        if int_id is None:
+            # Maybe we haven't fetched schema? (Already called above)
+            logging.debug(f"Tag '{tag_name}' has no integer ID mapped. IndexedTagValues might fail.")
+
+        # Candidate endpoints:
+        # 1. api/indexedTagValues/getIndexedTagValues (Verified from C# SDK) - EXPECTS INTEGER ID
+        # 2. api/Tag/GetStructure (Tree) - Usually takes GUID or ID? C# SDK uses GetTagValuesAsync with long.
+        # 3. api/IndexedTagValues (Flat list)
+        
+        candidates = []
+        if int_id is not None:
+             candidates.append(f"/api/indexedTagValues/getIndexedTagValues?indexedTagId={int_id}&pageIndex=0&pageSize=1000")
+             candidates.append(f"/api/IndexedTagValues?indexedTagId={int_id}&pageIndex=0&pageSize=1000")
+        
+        # Fallbacks using GUID if ID failed or not found (some endpoints might support GUID)
+        if guid:
+             # Some API versions might support GUID on GetStructure or GetNodes
+             candidates.append(f"/api/Tag/GetStructure?tagId={guid}")
+             candidates.append(f"/api/Tag/GetNodes?tagId={guid}")
+             # If GUID is passed to indexedTagId it likely fails, but we can keep as last resort? No, generates 404.
+             # candidates.append(f"/api/indexedTagValues/getIndexedTagValues?indexedTagId={guid}...") # Safe to skip
+
+        for endpoint in candidates:
+            try:
+                logging.debug(f"[DAMINION] Trying endpoint: {endpoint}")
+                response = self._make_request(endpoint)
+                
+                items = []
+                if isinstance(response, list):
+                    items = response
+                elif isinstance(response, dict):
+                     # Handle wrappers: data, values, items, nodes
+                     items = response.get('data') or response.get('values') or response.get('items') or response.get('nodes')
+                     # Special case: check if dict IS a node with 'subTags' or 'nodes'
+                     if not items and ('subTags' in response or 'nodes' in response):
+                          items = response.get('subTags') or response.get('nodes')
+                          
+                     if isinstance(items, dict):
+                         items = list(items.values())
+                
+                if isinstance(items, list):
+                    logging.info(f"[DAMINION] Retrieved {len(items)} values for tag '{tag_name}' via {endpoint.split('?')[0]}")
+                    return items
+            except Exception as e:
+                logging.debug(f"[DAMINION] Endpoint {endpoint} failed: {e}")
+                continue
+
+        logging.warning(f"Failed to fetch values for tag {tag_name} using any known endpoint.")
+        return []
+
+    def get_items_by_tag(self, tag_name: str, value_id: str | int, value_name: str = None) -> List[Dict]:
+        """
+        Get items that have a specific tag value.
+        """
+        # Try structured query: TagGUID,ValueID
+        guid = self._tag_map.get(tag_name) or self._tag_map.get(tag_name.lower()) or self._tag_map.get(tag_name.title())
+        if not guid and tag_name == "Collection":
+             guid = self._tag_map.get("Collections")
+             
+        if guid:
+             # Structured: query="{TagGUID},{ValueID}"
+             # If GetByQuery is supported (it might not be on older servers, returning 404)
+             q = f"{guid},{value_id}"
+             ops = f"{guid},any"
+             items = self.get_items_by_query(q, ops)
+             if items is not None:
+                 return items
+        
+        # Fallback to search if name provided
+        if value_name:
+             # If tag is "Collection", query should be "Place:London" (if Place)
+             # "Collections:MyCollection"
+             # normalize tag name for search
+             search_tag = "Collections" if tag_name == "Collection" else tag_name
+             return self.search_items(f"{search_tag}:{value_name}")
+             
+        return []
 
     def get_untagged_items(self) -> Tuple[List[Dict], int]:
         """

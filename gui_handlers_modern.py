@@ -548,7 +548,14 @@ def on_inference_mode_change(gui_instance, mode_value=None):
             # In gui_steps, it's packed first in config_section.
             # But here we don't easily have reference to config_section unless stored.
             # However, gui_instance.hw_frame.master should be config_section.
-            gui_instance.hw_frame.pack(fill="x", padx=40, pady=(0, 10), before=gui_instance.hw_frame.master.winfo_children()[1] if len(gui_instance.hw_frame.master.winfo_children()) > 1 else None)
+            try:
+                # Re-pack HW frame if hidden
+                if not gui_instance.hw_frame.winfo_ismapped():
+                    gui_instance.hw_frame.pack(fill="x", padx=40, pady=(0, 10), before=gui_instance.hw_frame.master.winfo_children()[1] if len(gui_instance.hw_frame.master.winfo_children()) > 1 else None)
+            except Exception as e:
+                # Fallback packing if specific position fails
+                logging.debug(f"Failed to specific pack hw_frame, appending: {e}")
+                gui_instance.hw_frame.pack(fill="x", padx=40, pady=(0, 10))
 
         if hasattr(gui_instance, 'device_selector'):
              gui_instance.device_selector.configure(state="normal")
@@ -625,7 +632,7 @@ def on_scope_change(gui_instance, event=None):
 
             # Show/hide Daminion collections dropdown
             if hasattr(gui_instance, 'daminion_collections_frame'):
-                 if scope == "Shared Collection":
+                 if scope in ["Shared Collection", "Collection"]:
                      gui_instance.daminion_collections_frame.pack(fill="x", padx=40, pady=(0, 10))
                  else:
                      gui_instance.daminion_collections_frame.pack_forget()
@@ -638,7 +645,7 @@ def on_scope_change(gui_instance, event=None):
             
             # Legacy dropdown support
             if hasattr(gui_instance, 'daminion_collection_combo'):
-                if scope == "Shared Collection":
+                if scope in ["Shared Collection", "Collection"]:
                     gui_instance.daminion_collection_combo.pack(side="left", padx=(10, 0))
                     if hasattr(gui_instance, 'refresh_collections_btn'):
                         gui_instance.refresh_collections_btn.pack(side="left", padx=(10, 0))
@@ -1064,8 +1071,9 @@ def toggle_input_state(gui_instance, state="normal"):
             # Extract scope and collection ID
             scope = gui_instance.scope_var.get()
             collection_id = None
+            collection_name = None
             
-            if scope == "Shared Collection":
+            if scope in ["Shared Collection", "Collection"]:
                 # Extract ID from combo "Name (ID)"
                 selection = gui_instance.daminion_collection_combo.get()
                 if selection:
@@ -1074,9 +1082,12 @@ def toggle_input_state(gui_instance, state="normal"):
                     match = re.search(r'\(([^)]+)\)$', selection)
                     if match:
                         collection_id = match.group(1)
+                        # Extract name part (before the ID)
+                        collection_name = selection[:match.start()].strip()
                     else:
                         # Fallback for simple ID or unexpected format
                         collection_id = selection
+                        collection_name = selection
                         logging.warning(f"Could not parse ID from selection '{selection}', using as-is.")
                 else:
                     show_modern_messagebox(gui_instance, "Missing Selection", "Please select a shared collection.", "warning")
@@ -1084,7 +1095,7 @@ def toggle_input_state(gui_instance, state="normal"):
                     gui_instance.stop_button.configure(state="disabled", fg_color="red")
                     return
             
-            worker_args = (gui_instance, categories, keywords, None, device, batch_size, truncation, threshold, collection_id, mode_key, token, cloud_model_id)
+            worker_args = (gui_instance, categories, keywords, None, device, batch_size, truncation, threshold, collection_id, mode_key, token, cloud_model_id, scope, collection_name)
 
 
         # Start processing in worker thread
@@ -1254,4 +1265,4 @@ def set_hf_token(gui_instance):
     if token is not None:
         gui_instance.config_manager.set('hf_token', token.strip() if token.strip() else None)
         gui_instance.config_manager.save_config()
-        show_modern_messagebox(gui_instance, "Token Saved", "API Token updated successfully.", "success")
+        # show_modern_messagebox(gui_instance, "Token Saved", "API Token updated successfully.", "success")
