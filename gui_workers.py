@@ -596,7 +596,7 @@ def process_images_worker(gui_instance, image_files, categories, keywords, devic
                         
                     processed_count += 1
                     
-                    except Exception as write_err:
+                except Exception as write_err:
                     error_count += 1
                     logging.error(f"Error writing metadata for {path}: {write_err}")
 
