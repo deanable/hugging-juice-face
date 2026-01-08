@@ -38,9 +38,14 @@ def test_get_flagged_items_filters(monkeypatch):
         {'id': 4, 'fileName': 'flagged_image.jpg'},
     ]
 
-    # Mock the search endpoints to return None so it falls back to client-side filtering
-    def fake_search_items(query, page_size=None):
-        return None
+    # Mock the search endpoints to return valid items (Client-side fallback was removed)
+    def fake_search_items(query, page_size=None, index=0):
+        # Return expected items simulating a successful search
+        return [
+            {'id': 2, 'fileName': 'rejected_one.png'},
+            {'id': 3, 'fileName': 'ok.jpg', 'status': 'REJECTED'},
+            {'id': 4, 'fileName': 'flagged_image.jpg'},
+        ]
         
     def fake_get_items_by_query(query, operators, index=0, page_size=500):
         return None

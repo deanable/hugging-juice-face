@@ -96,7 +96,7 @@ def write_metadata_with_retry(
                 return False
     return False
 
-def write_metadata(image_path: Path, category: str, keywords: List[str], description: str, q: Queue) -> bool:
+def write_metadata(image_path: Path, category: str, keywords: List[str], description: str, q: Optional[Queue] = None) -> bool:
     """
     Write category, keywords, and description to the image's IPTC and EXIF metadata.
     """
