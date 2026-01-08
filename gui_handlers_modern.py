@@ -290,6 +290,8 @@ def on_provider_change(gui_instance):
 
         # Optionally auto-refresh models for the provider
         try:
+            # Update default model for the new provider
+            on_model_task_change(gui_instance)
             gui_instance.on_find_models()
         except Exception:
             pass
@@ -431,13 +433,20 @@ def on_model_task_change(gui_instance, event=None):
         # Update Dynamic Cloud Model Suggestions and Selection
         if hasattr(gui_instance, 'cloud_model_entry'):
             # Enforce single best model per task for simplicity as requested
-            default_models = {
-                config.MODEL_TASK_IMAGE_CLASSIFICATION: "google/vit-base-patch16-224",
-                config.MODEL_TASK_IMAGE_TO_TEXT: "nlpconnect/vit-gpt2-image-captioning",
-                config.MODEL_TASK_ZERO_SHOT: "openai/clip-vit-base-patch32"
-            }
-            
-            target_model = default_models.get(task, "google/vit-base-patch16-224")
+            # Enforce single best model per task for simplicity as requested
+            provider = gui_instance.provider_var.get() if hasattr(gui_instance, 'provider_var') else 'Hugging Face'
+            is_openrouter = provider.lower().startswith('open')
+
+            if is_openrouter:
+                 # Use Gemini 2.0 Flash for all vision tasks on OpenRouter
+                 target_model = "google/gemini-2.0-flash-exp:free"
+            else:
+                default_models = {
+                    config.MODEL_TASK_IMAGE_CLASSIFICATION: "google/vit-base-patch16-224",
+                    config.MODEL_TASK_IMAGE_TO_TEXT: "nlpconnect/vit-gpt2-image-captioning",
+                    config.MODEL_TASK_ZERO_SHOT: "openai/clip-vit-base-patch32"
+                }
+                target_model = default_models.get(task, "google/vit-base-patch16-224")
             
             # Set the value
             gui_instance.cloud_model_entry.set(target_model)
@@ -605,12 +614,18 @@ def on_test_api_connection(gui_instance):
     
     if model_task == config.MODEL_TASK_IMAGE_CLASSIFICATION:
         default_hf = "google/vit-base-patch16-224"
-        default_or = "openai/clip-vit-base-patch32"
+        # Use a general purpose vision model for OpenRouter
+        default_or = "google/gemini-2.0-flash-exp:free"
         model_id = default_or if provider.lower().startswith('open') else default_hf
     elif model_task == config.MODEL_TASK_ZERO_SHOT:
-        model_id = "openai/clip-vit-base-patch32"
+        default_hf = "openai/clip-vit-base-patch32"
+        default_or = "google/gemini-2.0-flash-exp:free"
+        model_id = default_or if provider.lower().startswith('open') else default_hf
     else:
-        model_id = "Salesforce/blip-image-captioning-base"
+        # Image-to-Text
+        default_hf = "Salesforce/blip-image-captioning-base"
+        default_or = "google/gemini-2.0-flash-exp:free"
+        model_id = default_or if provider.lower().startswith('open') else default_hf
 
     logging.info(f"Auto-selected cloud model: {model_id} for task: {model_task} (provider={provider})")
 
@@ -627,8 +642,13 @@ def on_test_api_connection(gui_instance):
             if provider.lower().startswith('open'):
                 # Test OpenRouter by listing models
                 import requests
+                import openrouter_utils
                 try:
-                    r = requests.get('https://api.openrouter.ai/v1/models', headers={'Authorization': f'Bearer {token}'}, timeout=10)
+                    r = requests.get(openrouter_utils.OPENROUTER_MODELS_URL, headers={
+                        'Authorization': f'Bearer {token}',
+                        'HTTP-Referer': openrouter_utils.SITE_URL,
+                        'X-Title': openrouter_utils.SITE_NAME
+                    }, timeout=10)
                     r.raise_for_status()
                     # Save token to registry on success
                     gui_instance.settings_manager.save_openrouter_api_key_to_registry(token)

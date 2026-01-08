@@ -455,7 +455,7 @@ class ModernImageTaggerGUI(ctk.CTk):
         else:
             if self.api_status_label:
                 self.api_status_label.configure(text="❌ Connection Failed", text_color="red")
-            gui_handlers.show_modern_messagebox(self, "Connection Failed", f"Could not connect to HF API:\n{msg}", "error")
+            gui_handlers.show_modern_messagebox(self, "Connection Failed", f"Could not connect to API Provider:\n{msg}", "error")
 
     def _handle_progress_max(self, data):
         """Handle progress_max message."""

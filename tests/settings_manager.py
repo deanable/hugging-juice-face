@@ -211,6 +211,15 @@ class SettingsManager:
                 except Exception:
                     pass
 
+            # Persist API Token from Entry if present
+            if hasattr(gui_instance, 'api_token_entry'):
+                token_val = gui_instance.api_token_entry.get().strip()
+                if token_val:
+                    if provider and provider.lower().startswith('open'):
+                        self.save_openrouter_api_key_to_registry(token_val)
+                    else:
+                        self.save_api_key_to_registry(token_val)
+
             self.save()
         except Exception as e:
             logging.error(f"Error updating settings from GUI: {e}")

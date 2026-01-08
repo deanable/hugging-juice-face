@@ -11,33 +11,53 @@ import requests
 from typing import List, Tuple, Optional, Any
 import config
 
-OPENROUTER_MODELS_URL = "https://api.openrouter.ai/v1/models"
+OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
+SITE_URL = "https://github.com/deanable/hugging-juice-face"
+SITE_NAME = "Hugging Juice Face"
 
 
 def _extract_models_from_response(resp_json):
-    # Support both list and dict responses
-    if isinstance(resp_json, dict) and "models" in resp_json:
-        return resp_json.get("models", [])
+    # Support list, dict with 'models', and dict with 'data'
+    if isinstance(resp_json, dict):
+        if "data" in resp_json:
+            return resp_json.get("data", [])
+        if "models" in resp_json:
+            return resp_json.get("models", [])
     if isinstance(resp_json, list):
         return resp_json
     return []
 
 
 def _is_image_model(model_meta: dict) -> bool:
-    # Look for modalities or tags that indicate vision/image support
+    # Check architecture.modality or architecture.input_modalities (OpenRouter new schema)
+    arch = model_meta.get("architecture") or {}
+    if isinstance(arch, dict):
+        # Check input_modalities list
+        input_mods = arch.get("input_modalities")
+        if isinstance(input_mods, list) and "image" in input_mods:
+            return True
+        # Check modality string (e.g. "text+image->text")
+        modality_str = arch.get("modality")
+        if isinstance(modality_str, str) and ("image" in modality_str or "vision" in modality_str):
+            return True
+
+    # Legacy: Look for modalities or tags
     modalities = []
     modalities_raw = model_meta.get("modalities")
     if isinstance(modalities_raw, list):
         modalities = [m.lower() for m in modalities_raw if isinstance(m, str)]
-    # Some endpoints may expose 'capabilities' or 'tags'
+    
     tags_raw = model_meta.get("tags") or []
     tags = [t.lower() for t in tags_raw if isinstance(t, str)]
+    
     # Check common indicators
     if "image" in modalities or "vision" in modalities or "multimodal" in modalities:
         return True
+    
     joined_tags = " ".join(tags)
     if any(x in joined_tags for x in ("image", "vision", "multimodal", "clip", "vl")):
         return True
+    
     return False
 
 
@@ -49,6 +69,8 @@ def find_models_by_task(task: str, token: Optional[str] = None, limit: int = 50)
     headers = {}
     if token:
         headers["Authorization"] = f"Bearer {token}"
+    headers["HTTP-Referer"] = SITE_URL
+    headers["X-Title"] = SITE_NAME
 
     try:
         r = requests.get(OPENROUTER_MODELS_URL, headers=headers, timeout=10)
@@ -95,9 +117,11 @@ def run_inference_api(model_id: str, image_path: str, task: str, token: Optional
     headers = {}
     if token:
         headers["Authorization"] = f"Bearer {token}"
+    headers["HTTP-Referer"] = SITE_URL
+    headers["X-Title"] = SITE_NAME
 
     chat_url = "https://openrouter.ai/api/v1/chat/completions"
-    fallback_url = f"https://api.openrouter.ai/v1/models/{model_id}/outputs"
+    fallback_url = f"https://openrouter.ai/api/v1/models/{model_id}/outputs"
 
     img_path = Path(image_path)
     if not img_path.exists():
@@ -156,8 +180,15 @@ def run_inference_api(model_id: str, image_path: str, task: str, token: Optional
         headers_json = headers.copy()
         headers_json["Content-Type"] = "application/json"
 
+        logging.debug(f"OpenRouter Request Body for {model_id}: {json.dumps(body)}")
         resp = requests.post(chat_url, headers=headers_json, json=body, timeout=60)
-        resp.raise_for_status()
+        try:
+            resp.raise_for_status()
+        except requests.exceptions.HTTPError as re:
+            logging.error(f"OpenRouter Chat API failed: {re}")
+            logging.error(f"Response Content: {resp.text}")
+            raise re
+        
         resp_json = resp.json()
 
         # Extract the assistant content
