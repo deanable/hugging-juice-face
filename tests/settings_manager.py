@@ -1,6 +1,29 @@
+
+try:
+    import winreg
+except ImportError:
+    # Use a dummy mock for non-Windows environments to allow tests to import
+    import sys
+    from unittest.mock import MagicMock
+
+    mock_winreg = MagicMock()
+    mock_winreg.HKEY_CURRENT_USER = 1
+    mock_winreg.REG_SZ = 1
+    # Ensure OpenKey context manager works
+    mock_key = MagicMock()
+    mock_key.__enter__.return_value = mock_key
+    mock_key.__exit__.return_value = None
+    mock_winreg.OpenKey.return_value = mock_key
+    mock_winreg.CreateKey.return_value = mock_key
+
+    # Ensure QueryValueEx returns a tuple
+    mock_winreg.QueryValueEx.return_value = ("mock_value", 1)
+
+    sys.modules['winreg'] = mock_winreg
+    import winreg
+
 import json
 import logging
-import winreg
 from pathlib import Path
 from typing import Dict, Any
 

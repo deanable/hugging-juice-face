@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from gui_handlers import filter_local_images, filter_daminion_items
+from gui_handlers_modern import filter_local_images, filter_daminion_items
 
 
 def create_files(base: Path, files):
