@@ -4,5 +4,6 @@
     // Add the venv site-packages to analysis search path to help Pylance resolve imports
     "python.analysis.extraPaths": [
         "${workspaceFolder}\\.venv\\Lib\\site-packages"
-    ]
+    ],
+    "chat.agent.maxRequests": 50
 }

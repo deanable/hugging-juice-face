@@ -277,7 +277,7 @@ def create_step2_model(parent, gui_instance):
     gui_instance.inference_mode_var = ctk.StringVar(value="local")
     gui_instance.inference_mode_selector = ctk.CTkSegmentedButton(
         mode_frame,
-        values=["Local (Offline)", "Cloud (HF API)"],
+        values=["Local (Offline)", "Cloud (API)"],
         variable=gui_instance.inference_mode_var,
         command=gui_instance.on_inference_mode_change
     )
@@ -294,31 +294,53 @@ def create_step2_model(parent, gui_instance):
     )
     cloud_label.pack(anchor="w", padx=20, pady=(15, 10))
     
-    # API Token Input
+    # Provider selector (Hugging Face / OpenRouter)
+    provider_frame = ctk.CTkFrame(gui_instance.cloud_config_frame, fg_color="transparent")
+    provider_frame.pack(fill="x", padx=40, pady=(0, 10))
+
+    ctk.CTkLabel(provider_frame, text="Provider:", width=120, anchor="w").pack(side="left")
+    gui_instance.provider_var = ctk.StringVar(value=gui_instance.settings_manager.get('model_provider', 'Hugging Face'))
+    gui_instance.provider_selector = ctk.CTkOptionMenu(
+        provider_frame,
+        values=["Hugging Face", "OpenRouter"],
+        variable=gui_instance.provider_var,
+        command=gui_instance.on_provider_change
+    )
+    gui_instance.provider_selector.pack(side="left", padx=(10, 0), fill="x", expand=True)
+
+    # API Key Input (dynamic label)
     token_frame = ctk.CTkFrame(gui_instance.cloud_config_frame, fg_color="transparent")
     token_frame.pack(fill="x", padx=40, pady=(0, 10))
     
-    ctk.CTkLabel(token_frame, text="HF API Token:", width=120, anchor="w").pack(side="left")
+    gui_instance.api_token_label = ctk.CTkLabel(token_frame, text="API Key:", width=120, anchor="w")
+    gui_instance.api_token_label.pack(side="left")
+
     gui_instance.api_token_entry = ctk.CTkEntry(
         token_frame,
-        placeholder_text="hf_...",
+        placeholder_text="Enter API key...",
         show="*"
     )
     gui_instance.api_token_entry.pack(side="left", padx=(10, 0), fill="x", expand=True)
-    
-    # Pre-fill token if available (from Registry via settings_manager)
-    saved_token = gui_instance.settings_manager.get('hf_api_token', '')
+
+    # Pre-fill token if available
+    saved_token = ''
+    if gui_instance.provider_var.get() == 'OpenRouter':
+        saved_token = gui_instance.settings_manager.get('openrouter_api_key', '')
+    else:
+        saved_token = gui_instance.settings_manager.get('hf_api_token', '')
+
     if saved_token:
         gui_instance.api_token_entry.insert(0, saved_token)
 
-    # Model ID Input - REMOVED per user request (Auto-selected based on task)
-    # gui_instance.cloud_model_entry is no longer used for input.
-    # Logic in handlers will determine the best free model.
-    # Keeping the variable wrapper if needed by handlers to avoid AttributeErrors, or refactoring handlers.
-    # Ideally, we remove the UI element.
-    # Initializing a dummy for compatibility if handlers aren't fully refactored yet, 
-    # but I will refactor handlers in the next step.
-    pass
+    # Cloud Model selection dropdown (populated after model discovery)
+    model_frame = ctk.CTkFrame(gui_instance.cloud_config_frame, fg_color="transparent")
+    model_frame.pack(fill="x", padx=40, pady=(0, 10))
+
+    ctk.CTkLabel(model_frame, text="Cloud Model:", width=120, anchor="w").pack(side="left")
+    gui_instance.cloud_model_dropdown = ctk.CTkOptionMenu(model_frame, values=[], width=300)
+    gui_instance.cloud_model_dropdown.pack(side="left", padx=(10, 0), fill="x", expand=True)
+
+    # Model list will be populated when user clicks 'Find Models' or provider changes.  
 
     # Test Connection Button
     test_btn_frame = ctk.CTkFrame(gui_instance.cloud_config_frame, fg_color="transparent")

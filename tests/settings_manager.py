@@ -17,7 +17,11 @@ class SettingsManager:
         "confidence_threshold": 0.0,
         "categories": "",
         "keywords": "",
-        "hf_api_token": "" # Loaded from registry
+        "hf_api_token": "", # Loaded from registry
+        "model_provider": "Hugging Face",  # Options: 'Hugging Face', 'OpenRouter'
+        "openrouter_api_key": "",
+        "openrouter_selected_model": "",
+        "hf_selected_model": ""  # Selected cloud model when provider is Hugging Face
     }
 
     def __init__(self, filename: str = SETTINGS_FILE):
@@ -37,10 +41,13 @@ class SettingsManager:
             except Exception as e:
                 logging.error(f"Failed to load settings: {e}")
 
-        # 2. Load API Key from Registry (Security/System-wide)
+        # 2. Load API Keys from Registry (Security/System-wide)
         registry_key = self.load_api_key_from_registry()
         if registry_key:
             self.settings['hf_api_token'] = registry_key
+        openrouter_key = self.load_openrouter_api_key_from_registry()
+        if openrouter_key:
+            self.settings['openrouter_api_key'] = openrouter_key
 
     def save(self):
         """Save current settings to JSON file."""
@@ -49,8 +56,11 @@ class SettingsManager:
             # For now, we keep them distinct. 
             # We don't save 'hf_api_token' to JSON to prefer Registry.
             data_to_save = self.settings.copy()
+            # Tokens are stored in the registry for security, not the JSON file
             if 'hf_api_token' in data_to_save:
                 del data_to_save['hf_api_token']
+            if 'openrouter_api_key' in data_to_save:
+                del data_to_save['openrouter_api_key']
 
             with open(self.filepath, 'w') as f:
                 json.dump(data_to_save, f, indent=4)
@@ -102,6 +112,29 @@ class SettingsManager:
         except Exception as e:
             logging.error(f"Registry Save Error (Daminion): {e}")
 
+    def load_openrouter_api_key_from_registry(self) -> str:
+        """Load OpenRouter API Key from Windows Registry."""
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, REGISTRY_PATH) as key:
+                value, _ = winreg.QueryValueEx(key, "OpenrouterApiToken")
+                return str(value)
+        except FileNotFoundError:
+            return ""
+        except Exception as e:
+            logging.error(f"Registry Load Error (OpenRouter): {e}")
+            return ""
+
+    def save_openrouter_api_key_to_registry(self, token: str):
+        """Save OpenRouter API Key to Windows Registry."""
+        try:
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, REGISTRY_PATH) as key:
+                winreg.SetValueEx(key, "OpenrouterApiToken", 0, winreg.REG_SZ, token)
+            # Update local memory too
+            self.settings['openrouter_api_key'] = token
+            logging.info("Saved OpenRouter API Key to Registry.")
+        except Exception as e:
+            logging.error(f"Registry Save Error (OpenRouter): {e}")
+
     def get(self, key: str, default: Any = None) -> Any:
         return self.settings.get(key, default)
 
@@ -138,6 +171,22 @@ class SettingsManager:
                  self.settings['categories'] = gui_instance.categories_entry.get()
             if hasattr(gui_instance, 'keywords_entry'): # Corrected name
                  self.settings['keywords'] = gui_instance.keywords_entry.get()
+
+            # Provider and cloud model selection (store per-provider)
+            provider = None
+            if hasattr(gui_instance, 'provider_var'):
+                provider = gui_instance.provider_var.get()
+                self.settings['model_provider'] = provider
+
+            if hasattr(gui_instance, 'cloud_model_dropdown'):
+                try:
+                    selected = gui_instance.cloud_model_dropdown.get()
+                    if provider and provider.lower().startswith('open'):
+                        self.settings['openrouter_selected_model'] = selected
+                    else:
+                        self.settings['hf_selected_model'] = selected
+                except Exception:
+                    pass
 
             self.save()
         except Exception as e:

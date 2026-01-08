@@ -9,7 +9,7 @@ from pathlib import Path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from daminion_client import DaminionClient
-from settings_manager import SettingsManager
+from tests.settings_manager import SettingsManager
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

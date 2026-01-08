@@ -68,6 +68,14 @@ class ModelConfig(BaseModel):
         default=None,
         description="Hugging Face API Token"
     )
+    model_provider: str = Field(
+        default="Hugging Face",
+        description="Cloud model provider: 'Hugging Face' or 'OpenRouter'"
+    )
+    openrouter_api_key: Optional[str] = Field(
+        default=None,
+        description="OpenRouter API Key"
+    )
 
     @field_validator('last_model_task')
     @classmethod
@@ -197,6 +205,8 @@ class AppConfig(BaseModel):
             'last_model_task': self.model.last_model_task,
             'last_model_id': self.model.last_model_id,
             'hf_token': self.model.hf_token,
+            'model_provider': self.model.model_provider,
+            'openrouter_api_key': self.model.openrouter_api_key,
             'daminion_url': self.daminion.url,
             'daminion_username': self.daminion.username,
             'default_categories': self.tagging.default_categories,
@@ -216,6 +226,8 @@ class AppConfig(BaseModel):
                 last_model_task=data.get('last_model_task', config.MODEL_TASK_IMAGE_CLASSIFICATION),
                 last_model_id=data.get('last_model_id'),
                 hf_token=data.get('hf_token'),
+                model_provider=data.get('model_provider', 'Hugging Face'),
+                openrouter_api_key=data.get('openrouter_api_key')
             ),
             daminion=DaminionConfig(
                 url=data.get('daminion_url', 'https://interiors.daminion.net'),

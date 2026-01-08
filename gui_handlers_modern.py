@@ -194,7 +194,7 @@ def update_step_states(gui_instance):
                    (gui_instance.processing_mode == "daminion" and gui_instance.daminion_client)
     
     # Model/API Ready?
-    is_cloud = hasattr(gui_instance, 'inference_mode_var') and gui_instance.inference_mode_var.get() == "Cloud (HF API)"
+    is_cloud = hasattr(gui_instance, 'inference_mode_var') and "Cloud" in gui_instance.inference_mode_var.get()
     if is_cloud:
         model_ready = bool(gui_instance.api_token_entry.get())
     else:
@@ -267,6 +267,35 @@ def update_task_description(gui_instance):
     except Exception as e:
         logging.warning(f"Could not update task description: {e}")
 
+
+def on_provider_change(gui_instance):
+    """Handle cloud provider selection change (Hugging Face vs OpenRouter)."""
+    try:
+        provider = gui_instance.provider_var.get() if hasattr(gui_instance, 'provider_var') else 'Hugging Face'
+        # Update label text/context
+        if hasattr(gui_instance, 'api_token_label'):
+            if provider.lower().startswith('open'):
+                gui_instance.api_token_label.configure(text="OpenRouter API Key:")
+                # Prefill OpenRouter token if present
+                saved = gui_instance.settings_manager.get('openrouter_api_key', '')
+                gui_instance.api_token_entry.delete(0, 'end')
+                if saved:
+                    gui_instance.api_token_entry.insert(0, saved)
+            else:
+                gui_instance.api_token_label.configure(text="HF API Token:")
+                saved = gui_instance.settings_manager.get('hf_api_token', '')
+                gui_instance.api_token_entry.delete(0, 'end')
+                if saved:
+                    gui_instance.api_token_entry.insert(0, saved)
+
+        # Optionally auto-refresh models for the provider
+        try:
+            gui_instance.on_find_models()
+        except Exception:
+            pass
+
+    except Exception as e:
+        logging.error(f"Error handling provider change: {e}")
 
 def update_step3_visibility(gui_instance):
     """Update visibility of Step 3 sections based on selected analysis type.
@@ -421,7 +450,7 @@ def on_model_task_change(gui_instance, event=None):
             # but we should enforce "disabled" state here if currently in Cloud mode to reflect the "best model only" policy.
             
             mode = gui_instance.inference_mode_var.get() if hasattr(gui_instance, 'inference_mode_var') else "local"
-            if mode == "Cloud (HF API)":
+            if "Cloud" in mode:
                  gui_instance.cloud_model_entry.configure(state="disabled")
             else:
                  # In local mode, this entry isn't visible usually, but keep it enabled just in case
@@ -496,7 +525,7 @@ def on_inference_mode_change(gui_instance, mode_value=None):
     mode = gui_instance.inference_mode_var.get()
     
     # Toggle sections
-    if mode == "Cloud (HF API)":
+    if "Cloud" in mode:
         # Cloud Mode
         # Hide local model search frames first to avoid conflict
         if hasattr(gui_instance, 'local_model_search_section'):
@@ -567,6 +596,7 @@ def on_test_api_connection(gui_instance):
     """Validates the HF Token and Model ID for API access.
     """
     token = gui_instance.api_token_entry.get().strip()
+    provider = gui_instance.provider_var.get() if hasattr(gui_instance, 'provider_var') else 'Hugging Face'
     
     # Auto-select model based on task (User request: best free model)
     display_task = gui_instance.model_task.get()
@@ -574,43 +604,52 @@ def on_test_api_connection(gui_instance):
     model_task = task_map_inv.get(display_task, config.MODEL_TASK_IMAGE_CLASSIFICATION)
     
     if model_task == config.MODEL_TASK_IMAGE_CLASSIFICATION:
-        model_id = "google/vit-base-patch16-224"
+        default_hf = "google/vit-base-patch16-224"
+        default_or = "openai/clip-vit-base-patch32"
+        model_id = default_or if provider.lower().startswith('open') else default_hf
     elif model_task == config.MODEL_TASK_ZERO_SHOT:
         model_id = "openai/clip-vit-base-patch32"
     else:
         model_id = "Salesforce/blip-image-captioning-base"
 
-    logging.info(f"Auto-selected cloud model: {model_id} for task: {model_task}")
+    logging.info(f"Auto-selected cloud model: {model_id} for task: {model_task} (provider={provider})")
 
     if not token:
-        show_modern_messagebox(gui_instance, "Missing Token", "Please enter a Hugging Face API Token.", "warning")
+        show_modern_messagebox(gui_instance, "Missing Token", f"Please enter an API token for {provider}.", "warning")
         return
         
     gui_instance.test_api_button.configure(state="disabled", text="Testing...")
-    gui_instance.api_status_label.configure(text=f"Connecting to {model_id}...", text_color="blue")
+    gui_instance.api_status_label.configure(text=f"Connecting to {model_id} ({provider})...", text_color="blue")
     
     # We can do this in a quick inline thread or worker
     def _test():
         try:
-             from huggingface_hub import InferenceClient
-             client = InferenceClient(token=token)
-             
-             # Simple non-inference check (get model info) or a tiny inference?
-             # get_model_info verifies readability.
-             from huggingface_hub import HfApi
-             api = HfApi(token=token)
-             info = api.model_info(model_id)
-             
-             # Check if pipeline tag matches expected if possible
-             # But generic 'post' works for all.
-             
-             # Success
-             # Save to Registry on success
-             gui_instance.settings_manager.save_api_key_to_registry(token)
-             gui_instance.q.put({'type': 'api_test_result', 'success': True, 'msg': f"Model found: {info.pipeline_tag}"})
-             
+            if provider.lower().startswith('open'):
+                # Test OpenRouter by listing models
+                import requests
+                try:
+                    r = requests.get('https://api.openrouter.ai/v1/models', headers={'Authorization': f'Bearer {token}'}, timeout=10)
+                    r.raise_for_status()
+                    # Save token to registry on success
+                    gui_instance.settings_manager.save_openrouter_api_key_to_registry(token)
+                    gui_instance.q.put({'type': 'api_test_result', 'success': True, 'msg': f"OpenRouter models accessible"})
+                except Exception as e:
+                    gui_instance.q.put({'type': 'api_test_result', 'success': False, 'msg': str(e)})
+            else:
+                from huggingface_hub import InferenceClient
+                client = InferenceClient(token=token)
+                # Simple non-inference check (get model info)
+                from huggingface_hub import HfApi
+                api = HfApi(token=token)
+                info = api.model_info(model_id)
+                # Save to Registry on success
+                gui_instance.settings_manager.save_api_key_to_registry(token)
+                gui_instance.q.put({'type': 'api_test_result', 'success': True, 'msg': f"Model found: {info.pipeline_tag}"})
         except Exception as e:
-             gui_instance.q.put({'type': 'api_test_result', 'success': False, 'msg': str(e)})
+            gui_instance.q.put({'type': 'api_test_result', 'success': False, 'msg': str(e)})
+
+    thread = threading.Thread(target=_test, daemon=True)
+    thread.start()
 
     thread = threading.Thread(target=_test, daemon=True)
     thread.start()
@@ -769,10 +808,11 @@ def on_find_models(gui_instance):
             if q:
                 search_query = q
 
-        # Start model search in worker thread
+        # Start model search in worker thread (pass provider selection)
+        provider = gui_instance.provider_var.get() if hasattr(gui_instance, 'provider_var') else 'Hugging Face'
         thread = threading.Thread(
             target=gui_workers.find_models_worker,
-            args=(gui_instance, search_query),
+            args=(gui_instance, search_query, provider),
             daemon=True
         )
         thread.start()
@@ -948,9 +988,10 @@ def on_start_processing(gui_instance):
         token = None
         cloud_model_id = None
         
-        if hasattr(gui_instance, 'inference_mode_var') and gui_instance.inference_mode_var.get() == "Cloud (HF API)":
+        if hasattr(gui_instance, 'inference_mode_var') and "Cloud" in gui_instance.inference_mode_var.get():
              inference_mode = "cloud"
              token = gui_instance.api_token_entry.get().strip()
+             provider = gui_instance.provider_var.get() if hasattr(gui_instance, 'provider_var') else 'Hugging Face'
              
              # Auto-select model based on task
              display_task = gui_instance.model_task.get()
@@ -958,13 +999,13 @@ def on_start_processing(gui_instance):
              model_task = task_map_inv.get(display_task, config.MODEL_TASK_IMAGE_CLASSIFICATION)
             
              if model_task == config.MODEL_TASK_IMAGE_CLASSIFICATION:
-                 cloud_model_id = "google/vit-base-patch16-224"
+                 cloud_model_id = "openai/clip-vit-base-patch32" if provider.lower().startswith('open') else "google/vit-base-patch16-224"
              elif model_task == config.MODEL_TASK_ZERO_SHOT:
                  cloud_model_id = "openai/clip-vit-base-patch32"
              else:
                  cloud_model_id = "Salesforce/blip-image-captioning-base"
                  
-             logging.info(f"Auto-selected cloud model: {cloud_model_id}")
+             logging.info(f"Auto-selected cloud model: {cloud_model_id} (provider={provider})")
 
         # Processing logic...
         gui_instance.stop_event.clear()
@@ -974,9 +1015,10 @@ def on_start_processing(gui_instance):
         if gui_instance.processing_mode == "daminion":
              # Daminion Source
              # args: gui_instance, categories, keywords, items, device, batch_size, truncation, threshold, collection_id, mode, token, cloud_model_id
+             provider = gui_instance.provider_var.get() if hasattr(gui_instance, 'provider_var') else 'Hugging Face'
              thread = threading.Thread(
                 target=gui_workers.process_daminion_worker,
-                args=(gui_instance, categories, keywords, None, -1, batch_size, truncation, threshold, None, inference_mode, token, cloud_model_id),
+                args=(gui_instance, categories, keywords, None, -1, batch_size, truncation, threshold, None, inference_mode, token, cloud_model_id, provider),
                 daemon=True
             )
              thread.start()
@@ -984,9 +1026,10 @@ def on_start_processing(gui_instance):
         else:
             # Local File Source
             # args: gui_instance, image_files, categories, keywords, device, batch_size, truncation, threshold, mode, token, cloud_model_id
+            provider = gui_instance.provider_var.get() if hasattr(gui_instance, 'provider_var') else 'Hugging Face'
             thread = threading.Thread(
                 target=gui_workers.process_images_worker,
-                args=(gui_instance, gui_instance.all_image_files, categories, keywords, -1, batch_size, truncation, threshold, inference_mode, token, cloud_model_id),
+                args=(gui_instance, gui_instance.all_image_files, categories, keywords, -1, batch_size, truncation, threshold, inference_mode, token, cloud_model_id, provider),
                 daemon=True
             )
             thread.start()
@@ -1064,7 +1107,7 @@ def toggle_input_state(gui_instance, state="normal"):
 
         # Gather Cloud/Local Params
         mode = gui_instance.inference_mode_var.get() if hasattr(gui_instance, 'inference_mode_var') else "local"
-        # Convert display string "Cloud (HF API)" -> "cloud"
+        # Convert display string "Cloud (API)" -> "cloud"
         mode_key = "cloud" if "Cloud" in mode else "local"
         
         token = None
@@ -1099,10 +1142,11 @@ def toggle_input_state(gui_instance, state="normal"):
         if gui_instance.processing_mode == "local":
             image_files = scan_image_directory(gui_instance.image_dir)
             target_worker = gui_workers.process_images_worker
-            worker_args = (gui_instance, image_files, categories, keywords, device, batch_size, truncation, threshold, mode_key, token, cloud_model_id)
+            provider = gui_instance.provider_var.get() if hasattr(gui_instance, 'provider_var') else 'Hugging Face'
+            worker_args = (gui_instance, image_files, categories, keywords, device, batch_size, truncation, threshold, mode_key, token, cloud_model_id, provider)
         else: # daminion
             target_worker = gui_workers.process_daminion_worker
-            
+            provider = gui_instance.provider_var.get() if hasattr(gui_instance, 'provider_var') else 'Hugging Face'            
             # Extract scope and collection ID
             scope = gui_instance.scope_var.get()
             if not scope:

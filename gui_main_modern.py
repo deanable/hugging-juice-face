@@ -33,7 +33,7 @@ from enhanced_progress_display import create_enhanced_progress_display, setup_en
 from enhanced_progress import get_progress_tracker, ProgressStage, set_progress_stage
 
 # Import Settings Manager
-from settings_manager import SettingsManager
+from tests.settings_manager import SettingsManager
 import huggingface_utils
 
 
@@ -264,6 +264,9 @@ class ModernImageTaggerGUI(ctk.CTk):
 
     def on_test_api_connection(self):
         gui_handlers.on_test_api_connection(self)
+
+    def on_provider_change(self, event=None):
+        gui_handlers.on_provider_change(self)
 
     def on_scope_change(self, event=None):
         gui_handlers.on_scope_change(self, event)
@@ -683,6 +686,29 @@ class ModernImageTaggerGUI(ctk.CTk):
 
         # Use the centralized update function
         gui_handlers.update_model_list(self, list(model_ids), downloaded)
+
+        # Populate cloud model dropdown for cloud providers
+        try:
+            if hasattr(self, 'cloud_model_dropdown') and self.cloud_model_dropdown:
+                values = list(model_ids)
+                if values:
+                    self.cloud_model_dropdown.configure(values=values)
+                    # Select the user's saved cloud model for the currently selected provider, if available
+                    try:
+                        provider = self.settings_manager.get('model_provider', 'Hugging Face') if hasattr(self, 'settings_manager') else 'Hugging Face'
+                        saved_key = 'openrouter_selected_model' if provider and provider.lower().startswith('open') else 'hf_selected_model'
+                        saved_model = self.settings_manager.get(saved_key, '') if hasattr(self, 'settings_manager') else ''
+                        if saved_model and saved_model in values:
+                            self.cloud_model_dropdown.set(saved_model)
+                        else:
+                            # Fallback to first available model
+                            self.cloud_model_dropdown.set(values[0])
+                    except Exception:
+                        pass
+                else:
+                    self.cloud_model_dropdown.configure(values=[])
+        except Exception as e:
+            logging.debug(f"Failed to populate cloud_model_dropdown: {e}")
 
         if self.find_models_button:
             self.find_models_button.configure(state="normal", text="🔍 Find Models")

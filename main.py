@@ -1,6 +1,6 @@
 """
 Main entry point for the Advanced Image Tagger application.
-Now supports both original Tkinter and modern CustomTkinter GUI.
+Uses the modern CustomTkinter GUI (legacy Tkinter GUI was removed).
 """
 
 import logging
@@ -8,16 +8,7 @@ import sys
 import os
 from logging_config import setup_logging
 
-def main_original():
-    """Run the original Tkinter GUI."""
-    from gui_main import ImageTaggerGUI
-    
-    try:
-        app = ImageTaggerGUI()
-        app.mainloop()
-    except Exception as e:
-        logging.exception("Original GUI failed")
-        raise
+# Legacy original Tkinter GUI removed; use the modern CustomTkinter GUI via `main_modern()`
 
 def main_modern():
     """Run the modern CustomTkinter GUI."""

@@ -1,7 +1,7 @@
 """
 Worker thread functions for the Image Tagger application.
 Handles background processing to keep the GUI responsive.
-Supports both Local (Offline) and Cloud (HF API) inference modes.
+Supports both Local (Offline) and Cloud (API) inference modes.
 """
 
 import logging
@@ -75,27 +75,42 @@ def connect_daminion_worker(gui_instance, url, username, password):
         gui_instance.q.put({'type': 'daminion_error', 'error': str(e)})
 
 
-def find_models_worker(gui_instance, search_query=None):
+def find_models_worker(gui_instance, search_query=None, provider='Hugging Face'):
     """Worker thread for finding models.
 
     Args:
         gui_instance: Reference to main GUI instance
         search_query: Optional manual search query
+        provider: 'Hugging Face' or 'OpenRouter'
     """
     try:
         display_task = gui_instance.model_task.get()
         task = config.DISPLAY_TASK_MAP.get(display_task, "")
         
-        # If manual search query is provided, use it.
-        # Otherwise, search by task.
-        if search_query:
-             # Search by model name/ID
-            model_ids, downloaded_models = huggingface_utils.find_models_by_name(search_query, task, limit=20)
-            logging.info(f"Searching for models with query: '{search_query}' (Filter task: {task})")
+        # Dispatch to provider-specific discovery
+        if provider.lower().startswith('open'):
+            try:
+                import openrouter_utils
+            except Exception:
+                logging.error("OpenRouter support missing (could not import openrouter_utils).")
+                gui_instance.q.put({'type': 'models_found', 'models': ([], [])})
+                return
+
+            if search_query:
+                model_ids, downloaded_models = openrouter_utils.find_models_by_name(search_query, task, token=gui_instance.settings_manager.get('openrouter_api_key', None), limit=20)
+                logging.info(f"OpenRouter: Searching models by query: '{search_query}' (Task: {task})")
+            else:
+                model_ids, downloaded_models = openrouter_utils.find_models_by_task(task, token=gui_instance.settings_manager.get('openrouter_api_key', None), limit=20)
+                logging.info(f"OpenRouter: Searching models by task: {task} (Display: {display_task})")
+
         else:
-             # Search by task
-            model_ids, downloaded_models = huggingface_utils.find_models_by_task(task)
-            logging.info(f"Searching for models by task: {task} (Display: {display_task})")
+            # Default to Hugging Face
+            if search_query:
+                model_ids, downloaded_models = huggingface_utils.find_models_by_name(search_query, task, limit=20)
+                logging.info(f"Searching for models with query: '{search_query}' (Filter task: {task})")
+            else:
+                model_ids, downloaded_models = huggingface_utils.find_models_by_task(task)
+                logging.info(f"Searching for models by task: {task} (Display: {display_task})")
 
         gui_instance.q.put({'type': 'models_found', 'models': (model_ids, downloaded_models)})
         logging.info(f"Found {len(model_ids)} models.")
@@ -165,7 +180,7 @@ def find_local_models_worker(gui_instance):
         gui_instance.q.put({'type': 'error', 'error': f"Failed to scan local model cache: {e}"})
 
 
-def process_daminion_worker(gui_instance, categories, keywords, items=None, device=-1, batch_size=8, truncation=True, threshold=0.0, collection_id=None, mode="local", token=None, cloud_model_id=None, scope=None, collection_name=None):
+def process_daminion_worker(gui_instance, categories, keywords, items=None, device=-1, batch_size=8, truncation=True, threshold=0.0, collection_id=None, mode="local", token=None, cloud_model_id=None, provider='Hugging Face', scope=None, collection_name=None):
     """Worker thread for processing Daminion items.
 
     Args:
@@ -339,13 +354,28 @@ def process_daminion_worker(gui_instance, categories, keywords, items=None, devi
 
                     # Use temporary file (thumbnail)
                     try:
-                        api_result = huggingface_utils.run_inference_api(
-                            cloud_model_id, 
-                            str(thumb_path), 
-                            model_task, 
-                            token, 
-                            parameters=params
-                        )
+                        # Dispatch to provider-specific inference if configured
+                        if provider and provider.lower().startswith('open'):
+                            try:
+                                import openrouter_utils
+                                api_result = openrouter_utils.run_inference_api(
+                                    cloud_model_id,
+                                    str(thumb_path),
+                                    model_task,
+                                    token,
+                                    parameters=params
+                                )
+                            except NotImplementedError as nie:
+                                raise ValueError(str(nie))
+                        else:
+                            api_result = huggingface_utils.run_inference_api(
+                                cloud_model_id,
+                                str(thumb_path),
+                                model_task,
+                                token,
+                                parameters=params
+                            )
+
                         # Normalize Result
                         if model_task == config.MODEL_TASK_ZERO_SHOT and isinstance(api_result, list):
                             # Convert [{"label": "A", "score": 0.9}, ...] to {'labels': ['A'], 'scores': [0.9]}
@@ -456,7 +486,7 @@ def process_daminion_worker(gui_instance, categories, keywords, items=None, devi
         gui_instance.q.put({'type': 'error', 'error': f"Daminion processing failed: {e}"})
 
 
-def process_images_worker(gui_instance, image_files, categories, keywords, device=-1, batch_size=8, truncation=True, threshold=0.0, mode="local", token=None, cloud_model_id=None):
+def process_images_worker(gui_instance, image_files, categories, keywords, device=-1, batch_size=8, truncation=True, threshold=0.0, mode="local", token=None, cloud_model_id=None, provider='Hugging Face'):
     """Worker thread for processing local images using batch processing.
 
     Args:
@@ -575,11 +605,25 @@ def process_images_worker(gui_instance, image_files, categories, keywords, devic
                           elif model_task == config.MODEL_TASK_IMAGE_TO_TEXT:
                               params["generate_kwargs"] = {"max_new_tokens": 200}
 
-                          api_res = huggingface_utils.run_inference_api(
-                                cloud_model_id, 
-                                str(img_path), 
-                                model_task, 
-                                token, 
+                          # Dispatch to provider-specific inference when available
+                          if provider and provider.lower().startswith('open'):
+                              try:
+                                  import openrouter_utils
+                                  api_res = openrouter_utils.run_inference_api(
+                                      cloud_model_id,
+                                      str(img_path),
+                                      model_task,
+                                      token,
+                                      parameters=params
+                                  )
+                              except NotImplementedError as nie:
+                                  raise ValueError(str(nie))
+                          else:
+                              api_res = huggingface_utils.run_inference_api(
+                                  cloud_model_id, 
+                                  str(img_path), 
+                                  model_task, 
+                                  token, 
                                 parameters=params
                           )
                           
